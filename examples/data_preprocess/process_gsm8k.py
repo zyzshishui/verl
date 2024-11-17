@@ -64,6 +64,7 @@ if __name__ == '__main__':
                     "role": "user",
                     "content": question
                 }],
+                "response": answer,
                 "ability": "math",
                 "reward_model": {
                     "style": "rule",

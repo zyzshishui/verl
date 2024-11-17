@@ -81,11 +81,11 @@ class SFTDataset(Dataset):
     def __getitem__(self, item):
         tokenizer = self.tokenizer
 
-        prompt = self.prompts[item]
+        prompt_chat = self.prompts[item]
         response = self.responses[item]
 
         # apply chat template
-        prompt_chat = [{'role': 'user', 'content': prompt}]
+        # prompt_chat = [{'role': 'user', 'content': prompt}]
 
         # string
         prompt_chat_str = tokenizer.apply_chat_template(prompt_chat, add_generation_prompt=True, tokenize=False)
