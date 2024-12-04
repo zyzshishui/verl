@@ -373,8 +373,7 @@ class RayPPOTrainer(object):
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
         # you should not use `create_colocated_worker_cls`. Instead, directly pass different resource pool to different worker groups.
         # See https://github.com/volcengine/verl/blob/master/examples/ray/tutorial.ipynb for more information.
-        colocate_in_same_process = False
-        if colocate_in_same_process:
+        if self.config.trainer.colocate_in_same_process: # default for FSDP Backend
             all_wg = {}
             for resource_pool, class_dict in self.resource_pool_to_cls.items():
                 worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
@@ -397,7 +396,7 @@ class RayPPOTrainer(object):
             # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
             self.actor_rollout_wg = all_wg['actor_rollout']
             self.actor_rollout_wg.init_model()
-        else:
+        else: # default for Megatron-LM backend
             # TODO: resource_pool
             self.critic_wg = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=critic_cls)
             self.ref_policy_wg = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=ref_policy_cls)

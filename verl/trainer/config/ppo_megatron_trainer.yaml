@@ -41,7 +41,7 @@ actor_rollout_ref:
     load_weight: True
   ref:
     megatron:
-      tensor_model_parallel_size: 4
+      tensor_model_parallel_size: 2
       pipeline_model_parallel_size: 1
       num_layers_per_virtual_pipeline_stage: null # vpp will hang. need debug.
       sequence_parallel: True
@@ -108,7 +108,7 @@ reward_model:
   enable: False
   strategy: megatron
   megatron:
-    tensor_model_parallel_size: 4
+    tensor_model_parallel_size: 2
     pipeline_model_parallel_size: 1
     num_layers_per_virtual_pipeline_stage: null # vpp will hang. need debug.
     sequence_parallel: True
@@ -132,6 +132,7 @@ algorithm:
     kl_coef: 0.001
 
 trainer:
+  colocate_in_same_process: False
   total_epochs: 30
   project_name: verl_examples
   experiment_name: gsm8k
