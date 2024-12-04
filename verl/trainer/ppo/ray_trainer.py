@@ -63,7 +63,7 @@ class ResourcePoolManager:
             # Due to the Ray issue, we can only support max_colocate_count=1 for now.
             # This means that each GPU can only have one process.
             # We can support max_colocate > 1 when applying this pull request: https://github.com/ray-project/ray/pull/44385
-            resource_pool = RayResourcePool(process_on_nodes=process_on_nodes, use_gpu=True, max_colocate_count=1)
+            resource_pool = RayResourcePool(process_on_nodes=process_on_nodes, use_gpu=True, max_colocate_count=5)
             self.resource_pool_dict[resource_pool_name] = resource_pool
 
     def get_resource_pool(self, role: Role) -> RayResourcePool:
@@ -373,28 +373,41 @@ class RayPPOTrainer(object):
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
         # you should not use `create_colocated_worker_cls`. Instead, directly pass different resource pool to different worker groups.
         # See https://github.com/volcengine/verl/blob/master/examples/ray/tutorial.ipynb for more information.
-        all_wg = {}
-        for resource_pool, class_dict in self.resource_pool_to_cls.items():
-            worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
-            wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
-            spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
-            all_wg.update(spawn_wg)
+        colocate_in_same_process = False
+        if colocate_in_same_process:
+            all_wg = {}
+            for resource_pool, class_dict in self.resource_pool_to_cls.items():
+                worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
+                wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=worker_dict_cls)
+                spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
+                all_wg.update(spawn_wg)
 
-        if self.use_critic:
-            self.critic_wg = all_wg['critic']
+            if self.use_critic:
+                self.critic_wg = all_wg['critic']
+                self.critic_wg.init_model()
+
+            if self.use_reference_policy:
+                self.ref_policy_wg = all_wg['ref']
+                self.ref_policy_wg.init_model()
+
+            if self.use_rm:
+                self.rm_wg = all_wg['rm']
+                self.rm_wg.init_model()
+
+            # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
+            self.actor_rollout_wg = all_wg['actor_rollout']
+            self.actor_rollout_wg.init_model()
+        else:
+            # TODO: resource_pool
+            self.critic_wg = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=critic_cls)
+            self.ref_policy_wg = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=ref_policy_cls)
+            self.actor_rollout_wg = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=actor_rollout_cls)
             self.critic_wg.init_model()
-
-        if self.use_reference_policy:
-            self.ref_policy_wg = all_wg['ref']
             self.ref_policy_wg.init_model()
-
-        if self.use_rm:
-            self.rm_wg = all_wg['rm']
-            self.rm_wg.init_model()
-
-        # we should create rollout at the end so that vllm can have a better estimation of kv cache memory
-        self.actor_rollout_wg = all_wg['actor_rollout']
-        self.actor_rollout_wg.init_model()
+            if self.use_rm:
+                self.rm_wg = self.ray_worker_group_cls(resource_pool=resource_pool, ray_cls_with_init=rm_cls)
+                self.rm_wg.init_model()
+            self.actor_rollout_wg.init_model() # actor should initialize at the end
 
     def fit(self):
         """
