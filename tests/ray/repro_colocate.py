@@ -26,11 +26,12 @@ class Actor(Worker):
 
     def __init__(self) -> None:
         super().__init__()
+        sleep(60)
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def add(self, data: DataProto):
         data.batch['a'] += self.rank
-        sleep(5)
+        sleep(60)
         return data
 
 
@@ -40,11 +41,12 @@ class Critic(Worker):
     def __init__(self, config) -> None:
         super().__init__()
         self.config = config
+        sleep(60)
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def sub(self, data: DataProto):
         data.batch['a'] -= self.config['b']
-        sleep(5)
+        sleep(60)
         return data
 
 @ray.remote
@@ -52,11 +54,12 @@ class Reference(Worker):
 
     def __init__(self) -> None:
         super().__init__()
+        sleep(60)
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def add(self, data: DataProto):
         data.batch['a'] -= self.rank
-        sleep(5)
+        sleep(60)
         return data
 
 @ray.remote
@@ -65,11 +68,12 @@ class Reward(Worker):
     def __init__(self, config) -> None:
         super().__init__()
         self.config = config
+        sleep(60)
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def sub(self, data: DataProto):
         data.batch['a'] += self.config['b']
-        sleep(5)
+        sleep(60)
         return data
 
 @ray.remote
@@ -87,17 +91,19 @@ def test_colocated_workers():
     resource_pool = RayResourcePool(process_on_nodes=process_on_nodes, max_colocate_count=1)
 
     # create colocated workers
+    all_wg = {}
     cls_dict = {'actor': actor_cls, 'critic': critic_cls, 'ref': ref_cls, 'reward': rm_cls}
     ray_cls_with_init = create_colocated_worker_cls(cls_dict)
     wg_dict = RayWorkerGroup(resource_pool=resource_pool, ray_cls_with_init=ray_cls_with_init)
     spawn_wg = wg_dict.spawn(prefix_set=cls_dict.keys())
+    all_wg.update(spawn_wg)
 
-    colocated_actor_wg = spawn_wg['actor']
-    colocated_critic_wg = spawn_wg['critic']
-    colocated_ref_wg = spawn_wg['ref']
-    colocated_reward_wg = spawn_wg['reward']
+    colocated_actor_wg = all_wg['actor']
+    colocated_critic_wg = all_wg['critic']
+    colocated_ref_wg = all_wg['ref']
+    colocated_reward_wg = all_wg['reward']
 
-    for i in range(10):
+    for i in range(20):
         print(f'iteration {i}')
         actor_output = colocated_actor_wg.add(data)
         critic_output = colocated_critic_wg.sub(data)
