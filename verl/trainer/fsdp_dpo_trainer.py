@@ -249,8 +249,6 @@ class FSDPSFTTrainer(object):
 
         # construct mask using scores. Only the lower left has value -1, 0, 1. 1
 
-
-
         shift_logits = logits[..., :-1, :].contiguous()
         shift_labels = labels.contiguous()
         # Flatten the tokens
