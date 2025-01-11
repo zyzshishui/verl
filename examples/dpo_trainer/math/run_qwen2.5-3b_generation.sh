@@ -10,7 +10,8 @@ n_samples=5
 for split in "test" "train"
 do
     output_path=${BASE_DIR}/data/gsm8k/Qwen2.5-3B-Instruct_${split}_output.parquet
-
+    
+    ray stop --force
     python3 -m verl.trainer.main_generation \
         trainer.nnodes=1 \
         trainer.n_gpus_per_node=16 \
