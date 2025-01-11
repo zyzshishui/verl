@@ -22,6 +22,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from verl.utils import hf_tokenizer
+from verl.utils.torch_functional import tokenize_and_postprocess_data
 
 
 def download_files_distributed(download_fn):
@@ -88,7 +89,7 @@ class RMDataset(Dataset):
             dataframes.append(dataframe)
         self.dataframe = pd.concat(dataframes)
         self.prompts = self.dataframe[self.prompt_key].tolist()
-        self.responses = self.dataframe[self.responses].tolist()
+        self.responses = self.dataframe[self.responses_key].tolist()
 
     def __len__(self):
         return len(self.prompts)
@@ -112,29 +113,32 @@ class RMDataset(Dataset):
         prompt = self.prompts[item]
         responses = self.responses[item]
 
-        prompt_ids = self.tokenizer(prompt, return_tensors='pt')['input_ids'][0]
-        responses_ids = []
+        prompt_with_chat_template = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
+        input_ids_lst = []
+        attention_mask_lst = []
         for response in responses:
-            response_ids = self.tokenizer(response, return_tensors='pt')['input_ids'][0]
-
+            input_str = prompt_with_chat_template + response
             if self.add_eos:
-                response_ids = torch.cat((response_ids, torch.tensor([self.tokenizer.eos_token_id])), dim=-1)
+                input_str = input_str + self.tokenizer.eos_token
 
+            input_ids, attention_mask = tokenize_and_postprocess_data(input_str, tokenizer=self.tokenizer, max_length=self.max_length, 
+                                                                      pad_token_id=self.tokenizer.pad_token_id, left_pad=False)
             
+            input_ids_lst.append(input_ids[0])
+            attention_mask_lst.append(attention_mask[0])
 
-        chosen_input_ids = torch.cat((prompt_ids, chosen_response_ids), dim=-1)
-        chosen_attention_mask = torch.ones_like(chosen_input_ids)
-
-        rejected_input_ids = torch.cat((prompt_ids, rejected_response_ids), dim=-1)
-        rejected_attention_mask = torch.ones_like(rejected_input_ids)
-
-        chosen_input_ids, chosen_attention_mask = self._pad_to_length(chosen_input_ids, chosen_attention_mask)
-        rejected_input_ids, rejected_attention_mask = self._pad_to_length(rejected_input_ids, rejected_attention_mask)
-
-        input_ids = torch.stack((chosen_input_ids, rejected_input_ids), dim=0)
-        attention_mask = torch.stack((rejected_input_ids, rejected_attention_mask), dim=0)
+        input_ids = torch.stack(input_ids_lst, dim=0)
+        attention_mask = torch.stack(attention_mask_lst, dim=0)
 
         return {
             'input_ids': input_ids,
             'attention_mask': attention_mask,
         }
+
+if __name__ == '__main__':
+    parquet_files = '/mnt/bn/seed-rlhf-hl/zhangchi.usc1992/data/gsm8k/Qwen2.5-3B-Instruct_output_after_ranking.parquet'
+    from transformers import AutoTokenizer
+    tokenizer = AutoTokenizer.from_pretrained('/mnt/bn/seed-rlhf-hl/zhangchi.usc1992/models/Qwen2.5-3B-Instruct')
+    dataset = RMDataset(parquet_files=parquet_files, tokenizer=tokenizer, prompt_key='prompt', responses_key='responses', max_length=2048)
+    
+    data_item = dataset[0]
