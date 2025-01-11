@@ -43,8 +43,7 @@ class RMDataset(Dataset):
                  parquet_files: Union[str, List[str]],
                  tokenizer,
                  prompt_key='prompt',
-                 chosen_key='chosen',
-                 rejected_key='rejected',
+                 responses_key='responses',
                  max_length=1024,
                  add_eos=True,
                  cache_dir='~/.cache/verl/rm'):
@@ -58,8 +57,7 @@ class RMDataset(Dataset):
         self.tokenizer = tokenizer
 
         self.prompt_key = prompt_key
-        self.chosen_key = chosen_key
-        self.rejected_key = rejected_key
+        self.responses_key = responses_key
 
         self.add_eos = add_eos
         self.max_length = max_length
@@ -90,8 +88,7 @@ class RMDataset(Dataset):
             dataframes.append(dataframe)
         self.dataframe = pd.concat(dataframes)
         self.prompts = self.dataframe[self.prompt_key].tolist()
-        self.chosen_responses = self.dataframe[self.chosen_key].tolist()
-        self.rejected_responses = self.dataframe[self.rejected_key].tolist()
+        self.responses = self.dataframe[self.responses].tolist()
 
     def __len__(self):
         return len(self.prompts)
@@ -113,17 +110,17 @@ class RMDataset(Dataset):
 
     def __getitem__(self, item):
         prompt = self.prompts[item]
-        chosen_response = self.chosen_responses[item]
-        rejected_response = self.rejected_responses[item]
+        responses = self.responses[item]
 
         prompt_ids = self.tokenizer(prompt, return_tensors='pt')['input_ids'][0]
-        chosen_response_ids = self.tokenizer(chosen_response, return_tensors='pt')['input_ids'][0]
-        rejected_response_ids = self.tokenizer(rejected_response, return_tensors='pt')['input_ids'][0]
+        responses_ids = []
+        for response in responses:
+            response_ids = self.tokenizer(response, return_tensors='pt')['input_ids'][0]
 
-        if self.add_eos:
-            chosen_response_ids = torch.cat((chosen_response_ids, torch.tensor([self.tokenizer.eos_token_id])), dim=-1)
-            rejected_response_ids = torch.cat((rejected_response_ids, torch.tensor([self.tokenizer.eos_token_id])),
-                                              dim=-1)
+            if self.add_eos:
+                response_ids = torch.cat((response_ids, torch.tensor([self.tokenizer.eos_token_id])), dim=-1)
+
+            
 
         chosen_input_ids = torch.cat((prompt_ids, chosen_response_ids), dim=-1)
         chosen_attention_mask = torch.ones_like(chosen_input_ids)
