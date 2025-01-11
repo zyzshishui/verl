@@ -39,6 +39,8 @@ def download_files_distributed(download_fn):
 
 
 class RMDataset(Dataset):
+    # TODO(zhangchi.usc1992): currently, we assume each prompt must contain N responses. Support setting a maximum N to enable
+    # each prompt with less than N and more than N responses. (truncate for more than N and add dummy response if less than N)
 
     def __init__(self,
                  parquet_files: Union[str, List[str]],

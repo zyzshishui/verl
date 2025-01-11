@@ -9,7 +9,14 @@ import pandas as pd
 import numpy as np
 
 if __name__ == '__main__':
-    dataset = pd.read_parquet('/mnt/bn/seed-rlhf-hl/zhangchi.usc1992/data/gsm8k/Qwen2.5-3B-Instruct_output.parquet')
+    import argparse
+    parser  = argparse.ArgumentParser()
+    parser.add_argument('--input_file', required=True, type=str)
+    parser.add_argument('--output_file', required=True, type=str)
+
+    args = parser.parse_args()
+
+    dataset = pd.read_parquet(args.input_file)
 
     # for each data item, we rank the responses using rule-based RM
     ranks = []
@@ -29,4 +36,4 @@ if __name__ == '__main__':
 
     dataset['ranks'] = ranks
 
-    dataset.to_parquet('/mnt/bn/seed-rlhf-hl/zhangchi.usc1992/data/gsm8k/Qwen2.5-3B-Instruct_output_after_ranking.parquet')
+    dataset.to_parquet(args.output_file)

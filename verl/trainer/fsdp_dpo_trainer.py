@@ -35,7 +35,7 @@ from tensordict import TensorDict
 from torch.utils.data import DataLoader, DistributedSampler
 
 from verl.utils.fsdp_utils import get_fsdp_wrap_policy, init_fn, get_init_weight_context_manager
-from verl.utils.dataset import SFTDataset
+from verl.utils.dataset import RMDataset
 from verl.utils.fs import copy_local_path_from_hdfs
 from verl.utils.tracking import Tracking
 
@@ -55,7 +55,7 @@ def extract_step(path):
     return None
 
 
-class FSDPSFTTrainer(object):
+class FSDPDPOTrainer(object):
 
     def __init__(self, config, device_mesh: DeviceMesh):
         self.config = config
@@ -92,7 +92,14 @@ class FSDPSFTTrainer(object):
     def _build_dataloader(self):
         config = self.config
         # build dataset
-        self.train_dataset = SFTDataset(parquet_files=config.data.train_files,
+        self.train_dataset = RMDataset(parquet_files=config.data.train_files,
+                                       tokenizer=self.tokenizer,
+                                       prompt_key=config.data.prompt_key,
+                                       responses_key=,
+                                       max_length=,
+                                       add_eos=)
+
+        self.train_dataset = RMDataset(parquet_files=config.data.train_files,
                                         tokenizer=self.tokenizer,
                                         prompt_key=config.data.prompt_key,
                                         prompt_dict_keys=config.data.get('prompt_dict_keys', None),
@@ -100,7 +107,7 @@ class FSDPSFTTrainer(object):
                                         response_dict_keys=config.data.get('response_dict_keys', None),
                                         max_length=config.data.max_length,
                                         truncation=config.data.truncation)
-        self.val_dataset = SFTDataset(parquet_files=config.data.val_files,
+        self.val_dataset = RMDataset(parquet_files=config.data.val_files,
                                       tokenizer=self.tokenizer,
                                       prompt_key=config.data.prompt_key,
                                       prompt_dict_keys=config.data.get('prompt_dict_keys', None),
@@ -375,12 +382,12 @@ from torch.distributed.device_mesh import init_device_mesh
 from verl.utils.distributed import initialize_global_process_group
 
 
-@hydra.main(config_path='config', config_name='sft_trainer', version_base=None)
+@hydra.main(config_path='config', config_name='dpo_trainer', version_base=None)
 def main(config):
     local_rank, rank, world_size = initialize_global_process_group()
 
     device_mesh = init_device_mesh(device_type='cuda', mesh_shape=(world_size,), mesh_dim_names=('dp',))
-    trainer = FSDPSFTTrainer(config=config, device_mesh=device_mesh)
+    trainer = FSDPDPOTrainer(config=config, device_mesh=device_mesh)
     trainer.fit()
 
 
