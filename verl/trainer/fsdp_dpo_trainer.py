@@ -209,8 +209,10 @@ class FSDPDPOTrainer(object):
                                                             num_training_steps=total_steps)
 
     def _compute_loss(self, batch):
-        from IPython import embed
-        embed()
+        if torch.distributed.get_rank() == 0:
+            from IPython import embed
+            embed()
+        torch.distributed.barrier()
 
         loss_mask = batch.pop('loss_mask')[:, :-1].reshape(-1).cuda()
         labels = batch['input_ids'][:, 1:].cuda()

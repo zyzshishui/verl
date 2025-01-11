@@ -14,7 +14,9 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
     data.train_files=$gsm8k_train_path \
     data.val_files=$gsm8k_test_path \
     data.train_batch_size=256 \
-    data.micro_batch_size=8 \
+    data.micro_batch_size=32 \
+    data.prompt_key=prompt \
+    data.response_key=responses \
     model.partial_pretrain=$model_path \
     trainer.default_local_dir=$save_path \
     trainer.project_name=gsm8k-dpo \
