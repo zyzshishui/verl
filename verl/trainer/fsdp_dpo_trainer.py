@@ -95,26 +95,16 @@ class FSDPDPOTrainer(object):
         self.train_dataset = RMDataset(parquet_files=config.data.train_files,
                                        tokenizer=self.tokenizer,
                                        prompt_key=config.data.prompt_key,
-                                       responses_key=,
-                                       max_length=,
-                                       add_eos=)
+                                       responses_key=config.data.response_key,
+                                       max_length=config.data.max_length,
+                                       add_eos=True)
 
-        self.train_dataset = RMDataset(parquet_files=config.data.train_files,
-                                        tokenizer=self.tokenizer,
-                                        prompt_key=config.data.prompt_key,
-                                        prompt_dict_keys=config.data.get('prompt_dict_keys', None),
-                                        response_key=config.data.response_key,
-                                        response_dict_keys=config.data.get('response_dict_keys', None),
-                                        max_length=config.data.max_length,
-                                        truncation=config.data.truncation)
         self.val_dataset = RMDataset(parquet_files=config.data.val_files,
-                                      tokenizer=self.tokenizer,
-                                      prompt_key=config.data.prompt_key,
-                                      prompt_dict_keys=config.data.get('prompt_dict_keys', None),
-                                      response_key=config.data.response_key,
-                                      response_dict_keys=config.data.get('response_dict_keys', None),
-                                      max_length=config.data.max_length,
-                                      truncation=config.data.truncation)
+                                     tokenizer=self.tokenizer,
+                                     prompt_key=config.data.prompt_key,
+                                     responses_key=config.data.response_key,
+                                     max_length=config.data.max_length,
+                                     add_eos=True)
 
         # build dataloader
         rank = self.device_mesh.get_rank()
@@ -219,6 +209,9 @@ class FSDPDPOTrainer(object):
                                                             num_training_steps=total_steps)
 
     def _compute_loss(self, batch):
+        from IPython import embed
+        embed()
+
         loss_mask = batch.pop('loss_mask')[:, :-1].reshape(-1).cuda()
         labels = batch['input_ids'][:, 1:].cuda()
         input_ids = batch['input_ids']
@@ -354,6 +347,7 @@ class FSDPDPOTrainer(object):
             for data in self.train_dataloader:
                 data = TensorDict(data, batch_size=self.config.data.train_batch_size).cuda()
                 metric = self.training_step(data)
+                # average metric across dp_ranks
                 if rank == 0:
                     tracking.log(data=metric, step=global_step)
                 global_step += 1
@@ -366,6 +360,7 @@ class FSDPDPOTrainer(object):
                 val_losses.append(val_loss)
             if rank == 0:
                 val_loss = torch.mean(torch.stack(val_losses))
+                # average metric across dp_ranks
                 metric = {'val/loss': val_loss.detach().item()}
                 tracking.log(data=metric, step=global_step)
             torch.distributed.barrier()
