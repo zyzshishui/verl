@@ -129,6 +129,9 @@ class FSDPDPOTrainer(object):
                                          sampler=self.val_sampler,
                                          drop_last=True)
 
+    def _build_reference_model(self):
+        
+
     def _build_model_optimizer(self):
         # TODO (zhangchi.usc1992):
         # 1. support pretrain from random weights
@@ -207,6 +210,9 @@ class FSDPDPOTrainer(object):
         self.lr_scheduler = get_cosine_schedule_with_warmup(optimizer=self.optimizer,
                                                             num_warmup_steps=num_warmup_steps,
                                                             num_training_steps=total_steps)
+        
+        # build reference policy
+
 
     def _compute_loss(self, batch):
         if torch.distributed.get_rank() == 0:
