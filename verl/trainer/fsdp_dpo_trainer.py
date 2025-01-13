@@ -72,7 +72,10 @@ class FSDPDPOTrainer(object):
 
         self._build_dataloader()
         # build model
-        self._build_model_optimizer()
+        self.fsdp_model = self._build_model(self.config.model)
+        self.optimizer, self.lr_scheduler = self._build_optimizer(self.config.model, self.fsdp_model)
+
+        self.fsdp_ref_model = self._build_model(self.config.ref_model)
 
         # TODO: add checkpoint manager
         if self.device_mesh.get_rank() == 0:
@@ -129,37 +132,34 @@ class FSDPDPOTrainer(object):
                                          sampler=self.val_sampler,
                                          drop_last=True)
 
-    def _build_reference_model(self):
-        
-
-    def _build_model_optimizer(self):
+    def _build_model(self, config):
         # TODO (zhangchi.usc1992):
         # 1. support pretrain from random weights
         # 2. support init directly from sharded weights
-        local_model_path = copy_local_path_from_hdfs(src=self.config.model.partial_pretrain, verbose=True)
+        local_model_path = copy_local_path_from_hdfs(src=config.model.partial_pretrain, verbose=True)
 
-        if self.config.model.get('external_lib', None) is not None:
+        if config.model.get('external_lib', None) is not None:
             # This is used to import external_lib into the huggingface systems
             import importlib
             importlib.import_module(self.config.model.external_lib)
 
         log_gpu_memory_usage('Before model allocation', logger=logger)
 
-        trust_remote_code = self.config.model.trust_remote_code
+        trust_remote_code = config.model.trust_remote_code
         # load config first
-        config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=trust_remote_code)
+        model_config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=trust_remote_code)
 
         # This may be very large
-        init_context = get_init_weight_context_manager(use_meta_tensor=not config.tie_word_embeddings)
+        init_context = get_init_weight_context_manager(use_meta_tensor=not model_config.tie_word_embeddings)
 
         with init_context():
-            self.model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(local_model_path,
-                                                                               config=config,
-                                                                               torch_dtype=torch.float32,
-                                                                               attn_implementation='flash_attention_2',
-                                                                               trust_remote_code=trust_remote_code)
+            model: PreTrainedModel = AutoModelForCausalLM.from_pretrained(local_model_path,
+                                                                          config=model_config,
+                                                                          torch_dtype=torch.float32,
+                                                                          attn_implementation='flash_attention_2',
+                                                                          trust_remote_code=trust_remote_code)
 
-        if self.config.model.enable_gradient_checkpointing:
+        if config.model.enable_gradient_checkpointing:
             self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
 
         log_gpu_memory_usage('After model allocation', logger=logger)
@@ -168,32 +168,32 @@ class FSDPDPOTrainer(object):
                                          reduce_dtype=torch.float32,
                                          buffer_dtype=torch.float32)
 
-        auto_wrap_policy = get_fsdp_wrap_policy(self.model, config=self.config.model.fsdp_config.wrap_policy)
+        auto_wrap_policy = get_fsdp_wrap_policy(self.model, config=config.model.fsdp_config.wrap_policy)
         if self.device_mesh.get_rank() == 0:
             print(auto_wrap_policy)
+        
+        cpu_offload = CPUOffload(offload_params=config.model.fsdp_config.cpu_offload)
 
-        if not self.config.model.fsdp_config.cpu_offload:
-            cpu_offload = None
-        else:
-            cpu_offload = CPUOffload(offload_params=self.config.model.fsdp_config.offload_params)
-
-        self.fsdp_model = FSDP(module=self.model,
-                               auto_wrap_policy=auto_wrap_policy,
-                               param_init_fn=init_fn,
-                               sharding_strategy=ShardingStrategy.FULL_SHARD,
-                               mixed_precision=mixed_precision,
-                               device_mesh=self.device_mesh,
-                               sync_module_states=True,
-                               device_id=torch.cuda.current_device(),
-                               cpu_offload=cpu_offload,
-                               use_orig_params=False)
+        fsdp_model = FSDP(module=model,
+                          auto_wrap_policy=auto_wrap_policy,
+                          param_init_fn=init_fn,
+                          sharding_strategy=ShardingStrategy.FULL_SHARD,
+                          mixed_precision=mixed_precision,
+                          device_mesh=self.device_mesh,
+                          sync_module_states=True,
+                          device_id=torch.cuda.current_device(),
+                          cpu_offload=cpu_offload,
+                          use_orig_params=False)
 
         log_gpu_memory_usage('After FSDP wrapping', logger=logger)
 
-        self.optimizer = optim.AdamW(self.fsdp_model.parameters(),
-                                     lr=self.config.optim.lr,
-                                     betas=self.config.optim.betas,
-                                     weight_decay=self.config.optim.weight_decay)
+        return fsdp_model
+
+    def _build_optimizer(self, config, fsdp_model):
+        optimizer = optim.AdamW(fsdp_model.parameters(),
+                                lr=config.optim.lr,
+                                betas=config.optim.betas,
+                                weight_decay=config.optim.weight_decay)
 
         log_gpu_memory_usage('After initialize optimizer', logger=logger)
 
@@ -205,13 +205,13 @@ class FSDPDPOTrainer(object):
                 f'Number of steps/epoch {steps_per_epoch}, number of epochs {self.config.trainer.total_epochs}, total number of steps {total_steps}'
             )
 
-        num_warmup_steps = int(total_steps * self.config.optim.warmup_steps_ratio)
+        num_warmup_steps = int(total_steps * config.optim.warmup_steps_ratio)
 
-        self.lr_scheduler = get_cosine_schedule_with_warmup(optimizer=self.optimizer,
+        lr_scheduler = get_cosine_schedule_with_warmup(optimizer=optimizer,
                                                             num_warmup_steps=num_warmup_steps,
                                                             num_training_steps=total_steps)
         
-        # build reference policy
+        return optimizer, lr_scheduler
 
 
     def _compute_loss(self, batch):

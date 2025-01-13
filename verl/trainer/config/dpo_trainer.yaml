@@ -15,7 +15,6 @@ model:
     wrap_policy:
       min_num_params: 0
     cpu_offload: False
-    offload_params: False
   external_lib: null
   enable_gradient_checkpointing: False
   trust_remote_code: False
@@ -25,8 +24,7 @@ ref_model:
   fsdp_config:
     wrap_policy:
       min_num_params: 0
-    cpu_offload: False
-    offload_params: False
+    cpu_offload: True
   external_lib: null
   trust_remote_code: False
 
