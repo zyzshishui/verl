@@ -40,6 +40,7 @@ from verl.utils.fs import copy_local_path_from_hdfs
 from verl.utils.tracking import Tracking
 
 from torch.distributed.device_mesh import DeviceMesh
+import torch.nn.functional as F
 
 import verl.utils.hdfs_io as hdfs_io
 from verl.utils.debug import log_gpu_memory_usage
@@ -76,6 +77,7 @@ class FSDPDPOTrainer(object):
         self.optimizer, self.lr_scheduler = self._build_optimizer(self.config.optim, self.fsdp_model)
 
         self.fsdp_ref_model = self._build_model(self.config.ref_model)
+        self.fsdp_ref_model.eval()
 
         # TODO: add checkpoint manager
         if self.device_mesh.get_rank() == 0:
@@ -212,50 +214,79 @@ class FSDPDPOTrainer(object):
                                                             num_training_steps=total_steps)
         
         return optimizer, lr_scheduler
+    
 
-
-    def _compute_loss(self, batch):
-        response_mask = batch.pop('response_mask')[:, :, :-1].cuda()
-
-        input_ids = batch['input_ids']
-        attention_mask = batch['attention_mask']
-        batch_size, num_responses, seqlen = input_ids.size()
-
-        input_ids = input_ids.view(-1, seqlen)
-        attention_mask = attention_mask.view(-1, seqlen)
-
-        labels = input_ids[:, 1:].cuda()
-
+    def _forward_logprobs(self, fsdp_model, input_ids, attention_mask, labels, response_mask):
         # prepare for packed inputs. input_ids, position_ids
         with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            output = self.fsdp_model(input_ids=input_ids,  # (bsz * num_responses, seqlen)
-                                     attention_mask=attention_mask,
-                                     use_cache=False)  # prevent model thinks it it generating
+            output = fsdp_model(input_ids=input_ids,  # (bsz * num_responses, seqlen)
+                                attention_mask=attention_mask,
+                                use_cache=False)  # prevent model thinks it it generating
 
         logits = output.logits # (batch_size * num_responses, seqlen, vocab_size)
 
         shift_logits = logits[..., :-1, :].contiguous()
 
-        log_probs = logprobs_from_logits(logits, labels)  # (bsz * num_responses, seqlen - 1)
-        log_probs = log_probs.view(batch_size, num_responses, -1)
-        log_probs = log_probs * response_mask # (bsz, num_responses, seqlen - 1)
-        log_probs = log_probs.sum(-1)
+        log_probs = logprobs_from_logits(shift_logits, labels)  # (bsz * num_responses, seqlen - 1)
+        log_probs = log_probs * response_mask # (bsz * num_responses, seqlen - 1)
+        log_probs = log_probs.sum(-1)  # (bsz * num_responses)
+        return log_probs
+
+    def _compute_loss(self, batch: TensorDict):
+        response_mask = batch['response_mask']
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        scores = batch['scores']
+
+        batch_size, num_responses, seqlen = input_ids.size()
+
+        input_ids = input_ids.view(-1, seqlen)
+        attention_mask = attention_mask.view(-1, seqlen)
+        response_mask = response_mask.view(-1, seqlen)
+
+        response_mask = response_mask[:, :-1]
+        labels = input_ids[:, 1:]
+
+        with torch.no_grad():
+            ref_log_probs = self._forward_logprobs(self.fsdp_ref_model, 
+                                                    input_ids=input_ids,
+                                                    attention_mask=attention_mask,
+                                                    labels=labels,
+                                                    response_mask=response_mask)
+            ref_log_probs = ref_log_probs.view(batch_size, num_responses)
+
+        log_probs = self._forward_logprobs(self.fsdp_model,
+                                           input_ids=input_ids,
+                                            attention_mask=attention_mask,
+                                            labels=labels,
+                                            response_mask=response_mask)
+        
+        log_probs = log_probs.view(batch_size, num_responses)
+
+        chosen_logprobs = log_probs.view(batch_size, num_responses, 1)
+        rejected_logprobs = log_probs.view(batch_size, 1, num_responses)
+
+        chosen_ref_logprobs = ref_log_probs.view(batch_size, num_responses, 1)
+        rejected_ref_logprobs = ref_log_probs.view(batch_size, 1, num_responses)
+
+        pairwise_logprobs = chosen_logprobs - rejected_logprobs  # (bsz, N, N)
+        pairwise_ref_logprobs = chosen_ref_logprobs - rejected_ref_logprobs  # (bsz, N, N)
+
+        # construct a mask
+        score_diff = scores.view(batch_size, num_responses, 1) - scores.view(batch_size, 1, num_responses) # (bsz, N, N)
+        positive_mask = (score_diff > 0).to(torch.float32)
+
+        logits = (pairwise_logprobs - pairwise_ref_logprobs) * positive_mask  # (bsz, N, N)
+        logits = logits.view(batch_size, -1)
+        loss = -F.logsigmoid(self.config.algorithm.beta * logits)
 
         if torch.distributed.get_rank() == 0:
             from IPython import embed
             embed()
         torch.distributed.barrier()
 
-        chosen_logprobs = log_probs.view(batch_size, num_responses, 1)
-        rejected_logprobs = log_probs.view(batch_size, 1, num_responses)
-
-        pairwise_logprobs = chosen_logprobs - rejected_logprobs  # (bsz, N, N)
-
-        scores = batch.pop('scores') # (bsz, N)
-        mask = scores.view(batch_size, N, 1) - scores.view(batch_size, 1, N)
-        positive_mask = (mask > 0).to(torch.float32)
-        negative_mask = (mask < 0).to(torch.float32)
-        loss_mask = positive_mask - negative_mask
+        loss = torch.sum(loss, dim=-1)  # (bsz,)
+        loss = torch.mean(loss)
 
         # construct mask using scores. Only the lower left has value -1, 0, 1. 1
 
@@ -355,7 +386,7 @@ class FSDPDPOTrainer(object):
         for epoch in range(self.config.trainer.total_epochs):
             self.train_sampler.set_epoch(epoch=epoch)
             for data in self.train_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.train_batch_size).cuda()
+                data = TensorDict(data, batch_size=self.config.data.train_batch_size).cuda(device=torch.cuda.current_device())
                 metric = self.training_step(data)
                 # average metric across dp_ranks
                 if rank == 0:
@@ -365,7 +396,7 @@ class FSDPDPOTrainer(object):
             # validation
             val_losses = []
             for data in self.val_dataloader:
-                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).cuda()
+                data = TensorDict(data, batch_size=self.config.data.micro_batch_size).cuda(device=torch.cuda.current_device())
                 val_loss = self.validation_step(data)
                 val_losses.append(val_loss)
             if rank == 0:

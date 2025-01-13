@@ -35,6 +35,9 @@ optim:
   warmup_steps_ratio: 0.1
   clip_grad: 1.0
 
+algorithm:
+  beta: 0.2
+
 trainer:
   default_local_dir: /tmp/sft_model
   default_hdfs_dir: hdfs://tmp/experiments/gsm8k/gemma-1.1-7b-it/ # change the hdfs path here

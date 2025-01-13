@@ -47,7 +47,7 @@ class RMDataset(Dataset):
                  tokenizer,
                  prompt_key='prompt',
                  responses_key='responses',
-                 rank_key='ranks',
+                 score_key='scores',
                  max_length=1024,
                  add_eos=True,
                  cache_dir='~/.cache/verl/rm'):
@@ -62,7 +62,7 @@ class RMDataset(Dataset):
 
         self.prompt_key = prompt_key
         self.responses_key = responses_key
-        self.rank_key = rank_key
+        self.score_key = score_key
 
         self.add_eos = add_eos
         self.max_length = max_length
@@ -94,7 +94,7 @@ class RMDataset(Dataset):
         self.dataframe = pd.concat(dataframes)
         self.prompts = self.dataframe[self.prompt_key].tolist()
         self.responses = self.dataframe[self.responses_key].tolist()
-        self.ranks = self.dataframe[self.rank_key].tolist()
+        self.scores = self.dataframe[self.score_key].tolist()
 
     def __len__(self):
         return len(self.prompts)
@@ -117,7 +117,7 @@ class RMDataset(Dataset):
     def __getitem__(self, item):
         prompt = self.prompts[item]
         responses = self.responses[item]
-        ranks = self.ranks[item]
+        scores = self.scores[item]
 
         prompt_with_chat_template = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
 
@@ -181,7 +181,7 @@ class RMDataset(Dataset):
             'input_ids': input_ids,
             'attention_mask': attention_mask,
             'response_mask': response_mask,
-            'ranks': torch.as_tensor(ranks)
+            'scores': torch.as_tensor(scores)
         }
 
 if __name__ == '__main__':

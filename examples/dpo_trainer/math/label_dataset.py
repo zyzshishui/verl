@@ -22,7 +22,7 @@ if __name__ == '__main__':
     dataset = pd.read_parquet(args.input_file)
 
     # for each data item, we rank the responses using rule-based RM
-    ranks = []
+    scores_lst = []
     best_scores = []
     mean_scores = []
 
@@ -35,17 +35,15 @@ if __name__ == '__main__':
             score = gsm8k.compute_score(response, ground_truth=ground_truth)
             scores.append(score)
 
+        scores_lst.append(scores)
+
         best_scores.append(np.max(scores))
         mean_scores.append(np.mean(scores))
-        
-        # produce a ranking order. from lower to higher
-        sorted_idx = np.argsort(scores)
-        ranks.append(sorted_idx)
 
     best_scores_mean = np.mean(best_scores)
     mean_scores_mean = np.mean(mean_scores)
     print(f'Best score: {best_scores_mean}, mean score: {mean_scores_mean}')
 
-    dataset['ranks'] = ranks
+    dataset['scores'] = scores_lst
 
     dataset.to_parquet(args.output_file)
