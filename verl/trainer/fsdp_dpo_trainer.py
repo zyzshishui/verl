@@ -340,7 +340,7 @@ class FSDPDPOTrainer(object):
         # save huggingface model
         if self.device_mesh.get_rank() == 0:
             os.makedirs(path, exist_ok=True)
-            self.model.save_pretrained(path, state_dict=state_dict)
+            self.fsdp_model._fsdp_wrapped_module.save_pretrained(path, state_dict=state_dict)
             self.tokenizer.save_pretrained(path)
             if self.config.trainer.default_hdfs_dir:
                 hdfs_io.makedirs(self.config.trainer.default_hdfs_dir, exist_ok=True)
