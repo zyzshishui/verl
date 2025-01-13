@@ -30,7 +30,7 @@ import torch.distributed
 from torch import nn, optim
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision, ShardingStrategy, CPUOffload
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel, AutoConfig
-from verl.utils.torch_functional import get_cosine_schedule_with_warmup
+from verl.utils.torch_functional import get_cosine_schedule_with_warmup, logprobs_from_logits
 from tensordict import TensorDict
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -73,7 +73,7 @@ class FSDPDPOTrainer(object):
         self._build_dataloader()
         # build model
         self.fsdp_model = self._build_model(self.config.model)
-        self.optimizer, self.lr_scheduler = self._build_optimizer(self.config.model, self.fsdp_model)
+        self.optimizer, self.lr_scheduler = self._build_optimizer(self.config.optim, self.fsdp_model)
 
         self.fsdp_ref_model = self._build_model(self.config.ref_model)
 
@@ -136,16 +136,16 @@ class FSDPDPOTrainer(object):
         # TODO (zhangchi.usc1992):
         # 1. support pretrain from random weights
         # 2. support init directly from sharded weights
-        local_model_path = copy_local_path_from_hdfs(src=config.model.partial_pretrain, verbose=True)
+        local_model_path = copy_local_path_from_hdfs(src=config.partial_pretrain, verbose=True)
 
-        if config.model.get('external_lib', None) is not None:
+        if config.get('external_lib', None) is not None:
             # This is used to import external_lib into the huggingface systems
             import importlib
-            importlib.import_module(self.config.model.external_lib)
+            importlib.import_module(self.config.external_lib)
 
         log_gpu_memory_usage('Before model allocation', logger=logger)
 
-        trust_remote_code = config.model.trust_remote_code
+        trust_remote_code = config.trust_remote_code
         # load config first
         model_config = AutoConfig.from_pretrained(local_model_path, trust_remote_code=trust_remote_code)
 
@@ -159,8 +159,8 @@ class FSDPDPOTrainer(object):
                                                                           attn_implementation='flash_attention_2',
                                                                           trust_remote_code=trust_remote_code)
 
-        if config.model.enable_gradient_checkpointing:
-            self.model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
+        if config.get('enable_gradient_checkpointing', False):
+            model.gradient_checkpointing_enable(gradient_checkpointing_kwargs={'use_reentrant': False})
 
         log_gpu_memory_usage('After model allocation', logger=logger)
 
@@ -168,11 +168,11 @@ class FSDPDPOTrainer(object):
                                          reduce_dtype=torch.float32,
                                          buffer_dtype=torch.float32)
 
-        auto_wrap_policy = get_fsdp_wrap_policy(self.model, config=config.model.fsdp_config.wrap_policy)
-        if self.device_mesh.get_rank() == 0:
+        auto_wrap_policy = get_fsdp_wrap_policy(model, config=config.fsdp_config.wrap_policy)
+        if torch.distributed.get_rank() == 0:
             print(auto_wrap_policy)
         
-        cpu_offload = CPUOffload(offload_params=config.model.fsdp_config.cpu_offload)
+        cpu_offload = CPUOffload(offload_params=config.fsdp_config.cpu_offload)
 
         fsdp_model = FSDP(module=model,
                           auto_wrap_policy=auto_wrap_policy,
@@ -191,9 +191,9 @@ class FSDPDPOTrainer(object):
 
     def _build_optimizer(self, config, fsdp_model):
         optimizer = optim.AdamW(fsdp_model.parameters(),
-                                lr=config.optim.lr,
-                                betas=config.optim.betas,
-                                weight_decay=config.optim.weight_decay)
+                                lr=config.lr,
+                                betas=config.betas,
+                                weight_decay=config.weight_decay)
 
         log_gpu_memory_usage('After initialize optimizer', logger=logger)
 
@@ -205,7 +205,7 @@ class FSDPDPOTrainer(object):
                 f'Number of steps/epoch {steps_per_epoch}, number of epochs {self.config.trainer.total_epochs}, total number of steps {total_steps}'
             )
 
-        num_warmup_steps = int(total_steps * config.optim.warmup_steps_ratio)
+        num_warmup_steps = int(total_steps * config.warmup_steps_ratio)
 
         lr_scheduler = get_cosine_schedule_with_warmup(optimizer=optimizer,
                                                             num_warmup_steps=num_warmup_steps,
@@ -215,37 +215,39 @@ class FSDPDPOTrainer(object):
 
 
     def _compute_loss(self, batch):
+        response_mask = batch.pop('response_mask')[:, :, :-1].cuda()
+
+        input_ids = batch['input_ids']
+        attention_mask = batch['attention_mask']
+        batch_size, num_responses, seqlen = input_ids.size()
+
+        input_ids = input_ids.view(-1, seqlen)
+        attention_mask = attention_mask.view(-1, seqlen)
+
+        labels = input_ids[:, 1:].cuda()
+
+        # prepare for packed inputs. input_ids, position_ids
+        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
+            output = self.fsdp_model(input_ids=input_ids,  # (bsz * num_responses, seqlen)
+                                     attention_mask=attention_mask,
+                                     use_cache=False)  # prevent model thinks it it generating
+
+        logits = output.logits # (batch_size * num_responses, seqlen, vocab_size)
+
+        shift_logits = logits[..., :-1, :].contiguous()
+
+        log_probs = logprobs_from_logits(logits, labels)  # (bsz * num_responses, seqlen - 1)
+        log_probs = log_probs.view(batch_size, num_responses, -1)
+        log_probs = log_probs * response_mask # (bsz, num_responses, seqlen - 1)
+        log_probs = log_probs.sum(-1)
+
         if torch.distributed.get_rank() == 0:
             from IPython import embed
             embed()
         torch.distributed.barrier()
 
-        loss_mask = batch.pop('loss_mask')[:, :-1].reshape(-1).cuda()
-        labels = batch['input_ids'][:, 1:].cuda()
-        input_ids = batch['input_ids']
-
-        # input_ids: [bsz, N, seqlen], attention_mask: [bsz, N, seqlen]
-        batch_size, N, seqlen = input_ids.size()
-
-        # prepare for packed inputs. input_ids, position_ids
-
-        with torch.autocast(device_type='cuda', dtype=torch.bfloat16):
-            output = self.fsdp_model(input_ids=batch['input_ids'],  # (bsz * N, seqlen)
-                                     attention_mask=batch['attention_mask'],
-                                     position_ids=batch['position_ids'],
-                                     use_cache=False)  # prevent model thinks it it generating
-
-        logits = output.logits
-
-        logits = logits.view(batch_size, N, seqlen, self.model.config.vocab_size)
-
-        from verl.utils.torch_functional import logprobs_from_logits
-
-        log_probs = logprobs_from_logits(logits, labels)  # (bsz, N, seqlen)
-        log_probs = log_probs.sum(-1)
-
-        chosen_logprobs = log_probs.view(batch_size, N, 1)
-        rejected_logprobs = log_probs.view(batch_size, 1, N)
+        chosen_logprobs = log_probs.view(batch_size, num_responses, 1)
+        rejected_logprobs = log_probs.view(batch_size, 1, num_responses)
 
         pairwise_logprobs = chosen_logprobs - rejected_logprobs  # (bsz, N, N)
 
