@@ -274,42 +274,13 @@ class FSDPDPOTrainer(object):
 
         # construct a mask
         score_diff = scores.view(batch_size, num_responses, 1) - scores.view(batch_size, 1, num_responses) # (bsz, N, N)
-        positive_mask = (score_diff > 0).to(torch.float32)
+        positive_mask = (score_diff > 0).to(torch.float32).view(batch_size, -1)
 
-        logits = (pairwise_logprobs - pairwise_ref_logprobs) * positive_mask  # (bsz, N, N)
+        logits = (pairwise_logprobs - pairwise_ref_logprobs)  # (bsz, N, N)
         logits = logits.view(batch_size, -1)
         loss = -F.logsigmoid(self.config.algorithm.beta * logits)
-
-        if torch.distributed.get_rank() == 0:
-            from IPython import embed
-            embed()
-        torch.distributed.barrier()
-
-        loss = torch.sum(loss, dim=-1)  # (bsz,)
+        loss = torch.sum(loss * positive_mask) # (bsz,)
         loss = torch.mean(loss)
-
-        # construct mask using scores. Only the lower left has value -1, 0, 1. 1
-
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels.contiguous()
-        # Flatten the tokens
-        loss_fct = nn.CrossEntropyLoss(reduction='none')
-        shift_logits = shift_logits.view(-1, self.model.config.vocab_size)
-        shift_labels = shift_labels.view(-1)
-        # Enable model parallelism
-        shift_labels = shift_labels.to(shift_logits.device)
-        loss = loss_fct(shift_logits, shift_labels)
-        loss = loss * loss_mask
-
-        valid_token_this_rank = torch.sum(loss_mask)
-
-        if self.config.data.balance_dp_token:
-            torch.distributed.all_reduce(valid_token_this_rank)  # becomes total valid tokens in all ranks
-            dp_size = torch.distributed.get_world_size()
-        else:
-            dp_size = 1
-
-        loss = torch.sum(loss) / valid_token_this_rank * dp_size  # possible bugs here for dp
         return loss
 
     def training_step(self, batch: TensorDict):
