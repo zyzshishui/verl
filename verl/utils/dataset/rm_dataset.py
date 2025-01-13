@@ -22,7 +22,7 @@ from torch.utils.data import Dataset
 from transformers import AutoTokenizer
 
 from verl.utils import hf_tokenizer
-from verl.utils.torch_functional import tokenize_and_postprocess_data
+from verl.utils.torch_functional import pad_sequence_to_length
 
 
 def download_files_distributed(download_fn):
@@ -119,17 +119,51 @@ class RMDataset(Dataset):
 
         prompt_with_chat_template = self.tokenizer.apply_chat_template(prompt, add_generation_prompt=True, tokenize=False)
 
-        prompt_ids = self.tokenizer(prompt_with_chat_template, return_tensors='pt', add_special_tokens=False)['input_ids']
+        prompt_ids_output = self.tokenizer(prompt_with_chat_template, return_tensors='pt', add_special_tokens=False)
+        prompt_ids = prompt_ids_output['input_ids']
+        prompt_attention_mask = prompt_ids_output['attention_mask']
+
+        prompt_length = prompt_ids.shape[-1]
 
         input_ids_lst = []
         attention_mask_lst = []
         for response in responses:
-            input_str = prompt_with_chat_template + response
             if self.add_eos:
-                input_str = input_str + self.tokenizer.eos_token
+                response = response + self.tokenizer.eos_token
+            response_ids_output = self.tokenizer(response, return_tensors='pt', add_special_tokens=False)
+            response_ids = response_ids_output['input_ids']
+            response_attention_mask = response_ids_output['attention_mask']
 
-            input_ids, attention_mask = tokenize_and_postprocess_data(input_str, tokenizer=self.tokenizer, max_length=self.max_length, 
-                                                                      pad_token_id=self.tokenizer.pad_token_id, left_pad=False)
+            input_ids = torch.cat([prompt_ids, response_ids], dim=-1)
+            attention_mask = torch.cat([prompt_attention_mask, response_attention_mask], dim=-1)
+
+            # pad to max_length or truncate
+            max_length = self.max_length
+            pad_token_id = self.tokenizer.pad_token_id
+            left_pad = False
+            truncation = 'error'
+            sequence_length = input_ids.shape[-1]
+            if sequence_length < max_length:
+                input_ids = pad_sequence_to_length(input_ids,
+                                                max_seq_len=max_length,
+                                                pad_token_id=pad_token_id,
+                                                left_pad=left_pad)
+                attention_mask = pad_sequence_to_length(attention_mask,
+                                                        max_seq_len=max_length,
+                                                        pad_token_id=0,
+                                                        left_pad=left_pad)
+            elif sequence_length > max_length:
+                if truncation == 'left':
+                    # actually, left truncation may not be reasonable
+                    input_ids = input_ids[:, -max_length:]
+                    attention_mask = attention_mask[:, -max_length:]
+                elif truncation == 'right':
+                    input_ids = input_ids[:, :max_length]
+                    attention_mask = attention_mask[:, :max_length]
+                elif truncation == 'error':
+                    raise NotImplementedError(f'{sequence_length=} is larger than {max_length=}')
+                else:
+                    raise NotImplementedError(f'Unknown truncation method {truncation}')
             
             input_ids_lst.append(input_ids[0])
             attention_mask_lst.append(attention_mask[0])
@@ -138,11 +172,13 @@ class RMDataset(Dataset):
         attention_mask = torch.stack(attention_mask_lst, dim=0)
 
         response_mask = attention_mask.clone() # (N, max_length)
+        # mask out the prompt part
+        response_mask[:, :prompt_length] = 0
         
-
         return {
             'input_ids': input_ids,
             'attention_mask': attention_mask,
+            'response_mask': response_mask
         }
 
 if __name__ == '__main__':
