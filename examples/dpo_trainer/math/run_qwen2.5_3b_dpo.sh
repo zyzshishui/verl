@@ -13,11 +13,15 @@ torchrun --standalone --nnodes=1 --nproc_per_node=$nproc_per_node \
      -m verl.trainer.fsdp_dpo_trainer \
     data.train_files=$gsm8k_train_path \
     data.val_files=$gsm8k_test_path \
-    data.train_batch_size=256 \
-    data.micro_batch_size=16 \
+    data.train_batch_size=512 \
+    data.micro_batch_size=64 \
+    data.max_length=2048 \
     data.prompt_key=prompt \
     data.response_key=responses \
+    optim.lr=5e-7 \
+    optim.weight_decay=0.1 \
     model.partial_pretrain=$model_path \
+    model.enable_gradient_checkpointing=True \
     trainer.default_local_dir=$save_path \
     trainer.project_name=gsm8k-dpo \
     trainer.experiment_name=gsm8k-dpo-Qwen2.5-3B-Instruct \

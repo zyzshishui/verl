@@ -30,7 +30,7 @@ import torch.distributed
 from torch import nn, optim
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, MixedPrecision, ShardingStrategy, CPUOffload
 from transformers import AutoTokenizer, AutoModelForCausalLM, PreTrainedModel, AutoConfig
-from verl.utils.torch_functional import get_cosine_schedule_with_warmup, logprobs_from_logits
+from verl.utils.torch_functional import get_cosine_schedule_with_warmup, logprobs_from_logits, masked_mean
 from tensordict import TensorDict
 from torch.utils.data import DataLoader, DistributedSampler
 
@@ -279,7 +279,7 @@ class FSDPDPOTrainer(object):
         logits = (pairwise_logprobs - pairwise_ref_logprobs)  # (bsz, N, N)
         logits = logits.view(batch_size, -1)
         loss = -F.logsigmoid(self.config.algorithm.beta * logits)
-        loss = torch.sum(loss * positive_mask) # (bsz,)
+        loss = torch.sum(loss * positive_mask, dim=-1) / (torch.sum(positive_mask, dim=-1) + 1e-8) # (bsz,)
         loss = torch.mean(loss)
         return loss
 
@@ -294,9 +294,15 @@ class FSDPDPOTrainer(object):
 
         micro_batches = batch.split(self.config.data.micro_batch_size)
         n_micro_batches = len(micro_batches)
+
+        micro_batch_loss = []
+
         for micro_batch in micro_batches:
             loss = self._compute_loss(batch=micro_batch) / n_micro_batches
             loss.backward()
+            micro_batch_loss.append(loss)
+
+        loss = torch.mean(torch.stack(micro_batch_loss))
 
         self.fsdp_model.clip_grad_norm_(max_norm=self.config.optim.clip_grad)
 
