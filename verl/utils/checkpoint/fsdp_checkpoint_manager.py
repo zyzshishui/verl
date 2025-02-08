@@ -199,8 +199,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         # save sharded state dict
         if self.sharded_state_dict:
             # every rank will save its own model and optim shard
-            state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True, rank0_only=True)
-            optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True)
+            optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 with FSDP.state_dict_type(self.model, StateDictType.SHARDED_STATE_DICT, state_dict_cfg, optim_cfg):
