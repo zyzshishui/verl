@@ -64,7 +64,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         if path is None:
             return
 
-        # Load extra state (existing code, works as-is)
+        # Load extra state
         remote_extra_state_path = os.path.join(path, f'extra_state_rank_{self.rank}.pt')
         print(f'[rank-{self.rank}]: Loading extra state from {remote_extra_state_path}')
         local_extra_state_path = copy_local_path_from_hdfs(remote_extra_state_path)
@@ -78,7 +78,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 )
         lr_scheduler_state_dict = extra_state_dict['lr_scheduler']
 
-        # Recover random state (existing code)
+        # Recover random state
         if 'rng' in extra_state_dict:
             self.load_rng_state(extra_state_dict['rng'])
 
@@ -86,7 +86,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             self.lr_scheduler.load_state_dict(lr_scheduler_state_dict)
 
         if self.sharded_state_dict:
-            # Sharded loading (existing code, works as-is)
+            # Sharded loading
             remote_model_path = os.path.join(path, f'model_rank_{self.rank}.pt')
             remote_optim_path = os.path.join(path, f'optim_rank_{self.rank}.pt')
             print(f'[rank-{self.rank}]: Loading model and optim from {remote_model_path} and {remote_optim_path}')
