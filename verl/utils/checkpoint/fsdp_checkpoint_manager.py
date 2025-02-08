@@ -73,7 +73,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
             try:
                 os.remove(local_extra_state_path) if is_non_local(local_extra_state_path) else None
             except Exception as e:
-                print(f'[rank-{self.rank}]: remove local resume ckpt file after loading failed, exception {e} will be ignored')
+                print(
+                    f'[rank-{self.rank}]: remove local resume ckpt file after loading failed, exception {e} will be ignored'
+                )
         lr_scheduler_state_dict = extra_state_dict['lr_scheduler']
 
         # Recover random state (existing code)
@@ -99,7 +101,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                     os.remove(local_model_path) if is_non_local(local_model_path) else None
                     os.remove(local_optim_path) if is_non_local(local_optim_path) else None
                 except Exception as e:
-                    print(f'[rank-{self.rank}]: remove local resume ckpt file after loading failed, exception {e} will be ignored')
+                    print(
+                        f'[rank-{self.rank}]: remove local resume ckpt file after loading failed, exception {e} will be ignored'
+                    )
 
             state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True)
             optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
@@ -116,10 +120,10 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 remote_model_path = os.path.join(path, 'model.pt')
                 remote_optim_path = os.path.join(path, 'optim.pt')
                 print(f'[rank-{self.rank}]: Loading model and optim from {remote_model_path} and {remote_optim_path}')
-                
+
                 local_model_path = copy_local_path_from_hdfs(remote_model_path)
                 local_optim_path = copy_local_path_from_hdfs(remote_optim_path)
-                
+
                 model_state_dict = torch.load(local_model_path, map_location="cpu")
                 optimizer_state_dict = torch.load(local_optim_path, map_location="cpu")
 
@@ -128,7 +132,9 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                         os.remove(local_model_path) if is_non_local(local_model_path) else None
                         os.remove(local_optim_path) if is_non_local(local_optim_path) else None
                     except Exception as e:
-                        print(f'[rank-{self.rank}]: remove local resume ckpt file after loading failed, exception {e} will be ignored')
+                        print(
+                            f'[rank-{self.rank}]: remove local resume ckpt file after loading failed, exception {e} will be ignored'
+                        )
 
             # Create lists for broadcasting
             model_state_list = [model_state_dict]
@@ -144,24 +150,20 @@ class FSDPCheckpointManager(BaseCheckpointManager):
 
             # Load model and optimizer
             with FSDP.state_dict_type(
-                self.model,
-                StateDictType.FULL_STATE_DICT,
-                state_dict_config=FullStateDictConfig(rank0_only=True),  # Only rank 0 has full state
-                optim_state_dict_config=FullOptimStateDictConfig(),  
+                    self.model,
+                    StateDictType.FULL_STATE_DICT,
+                    state_dict_config=FullStateDictConfig(rank0_only=True),
+                    optim_state_dict_config=FullOptimStateDictConfig(rank0_only=True),
             ):
                 # Load model
                 self.model.load_state_dict(model_state_dict)
-                
+
                 # Load optimizer
                 if self.optimizer is not None:
                     # Convert full optimizer state dict to sharded format
-                    sharded_optim_state = FSDP.optim_state_dict_to_load(
-                        self.model,
-                        self.optimizer,
-                        optimizer_state_dict
-                    )
+                    sharded_optim_state = FSDP.optim_state_dict_to_load(self.model, self.optimizer,
+                                                                        optimizer_state_dict)
                     self.optimizer.load_state_dict(sharded_optim_state)
-            # ========== END FIXES ========== #
 
     def save_checkpoint(self,
                         local_path: str,
@@ -197,8 +199,8 @@ class FSDPCheckpointManager(BaseCheckpointManager):
         # save sharded state dict
         if self.sharded_state_dict:
             # every rank will save its own model and optim shard
-            state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True)
-            optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True)
+            state_dict_cfg = ShardedStateDictConfig(offload_to_cpu=True, rank0_only=True)
+            optim_cfg = ShardedOptimStateDictConfig(offload_to_cpu=True, rank0_only=True)
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 with FSDP.state_dict_type(self.model, StateDictType.SHARDED_STATE_DICT, state_dict_cfg, optim_cfg):
@@ -228,9 +230,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 state_dict = self.model.state_dict()
                 if self.optimizer is not None:
                     optimizer_state_dict = self.optimizer.state_dict()
-                    optimizer_state_dict = FSDP.optim_state_dict(self.model,
-                                                                 self.optimizer,
-                                                                 optimizer_state_dict)
+                    optimizer_state_dict = FSDP.optim_state_dict(self.model, self.optimizer, optimizer_state_dict)
                 else:
                     optimizer_state_dict = None
 
@@ -249,7 +249,7 @@ class FSDPCheckpointManager(BaseCheckpointManager):
                 os.makedirs(hf_local_path, exist_ok=True)
                 self.model.save_pretrained(hf_local_path, state_dict=state_dict)
                 self.tokenizer.save_pretrained(hf_local_path)
-                
+
                 # TODO (sgm): backward compatible, delete it when uploader is ready
                 if hdfs_path is not None:
                     print(f'Uploading actor checkpoint to {hdfs_path}')

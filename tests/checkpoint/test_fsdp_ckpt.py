@@ -27,6 +27,7 @@ from transformers import Qwen2Config
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP, ShardingStrategy, MixedPrecision, \
             CPUOffload
 
+
 @pytest.mark.parametrize("sharded_state_dict", [True, False])
 def test_fsdp_ckpt(sharded_state_dict):
     assert torch.cuda.device_count() >= 2, "need at least 2 gpus for test"
@@ -122,5 +123,6 @@ def test_fsdp_ckpt(sharded_state_dict):
     shutil.rmtree(temp_dir)
     torch.distributed.barrier()
 
-if __name__ == '__main__':
-    test_fsdp_ckpt(False)
+
+# if __name__ == '__main__':
+#     test_fsdp_ckpt(False)
