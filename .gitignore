@@ -1,5 +1,7 @@
 data
 vllm
+# Do not ignore /verl/third_party/vllm 
+!/verl/third_party/vllm
 
 docker_env_install_vllm.sh
 docker_run_vllm.sh

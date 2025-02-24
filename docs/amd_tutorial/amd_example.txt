@@ -1,4 +1,6 @@
-# Setup Docker:
+# Setup
+
+## Docker:
 Find the docker here: https://hub.docker.com/r/rocm/vllm/tags (rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4)
 ```bash
 docker run --rm -it \
@@ -19,7 +21,7 @@ docker run --rm -it \
   /bin/bash
 ```
 
-# Build ROCM vLLM:
+## Build ROCM vLLM:
 ```bash
 pip uninstall vllm
 git clone https://github.com/vllm-project/vllm.git
@@ -30,8 +32,11 @@ python3 setup.py develop
 cd..
 ```
 
-# Setup the Environment
+## Install the require packages:
 ```
 pip install -r requirements_amd_no_deps.txt --no-deps
 pip install -r requirements_amd.txt
 ```
+
+
+# Example
