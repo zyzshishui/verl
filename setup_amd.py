@@ -162,7 +162,7 @@ with open(os.path.join(version_folder, 'verl/version/version')) as f:
 
 class CustomInstall(install):
     def run(self):
-        1. Install required dependencies first
+        # 1. Install required dependencies first
         print("Installing dependencies from requirements_amd.txt...")
         try:
             with open('requirements_amd.txt') as f:
@@ -229,7 +229,7 @@ class CustomInstall(install):
             print("Please try to install vllm manually following the instructions at:")
             print("https://docs.vllm.ai/en/v0.6.3/getting_started/amd-installation.html")
 
-        4. Run original install process
+        # 4. Run original install process
         super().run()
 
 # Extra requirements for testing

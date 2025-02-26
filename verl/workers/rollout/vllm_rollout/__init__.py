@@ -33,7 +33,7 @@ package_version = get_version(package_name)
 ###
 # package_version = get_version(package_name)
 # [AMD SUPPORT:]
-if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+if "AMD" in torch.cuda.get_device_name():
     import re
     package_version = version(package_name)
     package_version = re.match(r'(\d+\.\d+\.?\d*)', package_version).group(1)

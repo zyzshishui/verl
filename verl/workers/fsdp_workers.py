@@ -403,8 +403,8 @@ class ActorRolloutRefWorker(Worker):
     def update_actor(self, data: DataProto):
         ###
         # data = data.to('cuda')
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
             data = data.to('cuda')
@@ -418,8 +418,8 @@ class ActorRolloutRefWorker(Worker):
 
         ###
         # data.batch = data.batch.cuda()
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             data.batch = data.batch.to(torch.cuda.current_device()) 
         else:
             data.batch = data.batch.cuda()
@@ -460,8 +460,8 @@ class ActorRolloutRefWorker(Worker):
     def generate_sequences(self, prompts: DataProto):
         ###
         # prompts = prompts.to('cuda')
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             prompts = prompts.to(torch.cuda.current_device()) 
         else:
             prompts = prompts.to('cuda')
@@ -473,8 +473,8 @@ class ActorRolloutRefWorker(Worker):
 
         ###
         # prompts.batch = prompts.batch.cuda()
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
                 prompts.batch = prompts.batch.to(torch.cuda.current_device()) 
         else:
             prompts.batch = prompts.batch.cuda()
@@ -519,8 +519,8 @@ class ActorRolloutRefWorker(Worker):
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
         ###
         # data = data.to('cuda')
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
             data = data.to('cuda')
@@ -559,8 +559,8 @@ class ActorRolloutRefWorker(Worker):
 
         ###
         # data = data.to('cuda')
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
             data = data.to('cuda')
@@ -803,8 +803,8 @@ class CriticWorker(Worker):
     def compute_values(self, data: DataProto):
         ###
         # data = data.to('cuda')
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
             data = data.to('cuda')
@@ -832,8 +832,8 @@ class CriticWorker(Worker):
     def update_critic(self, data: DataProto):
         ###
         # data = data.to('cuda')
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        # [AMD SUPPORT:]
+        if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
             data = data.to('cuda')

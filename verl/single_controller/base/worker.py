@@ -119,13 +119,13 @@ class Worker(WorkerHelper):
         import os
 
         ###
-        #[AMD SUPPORT:]
+        #[AMD SUPPORT: torch]
         import torch
         ###
 
         ###
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        #[AMD SUPPORT: torch]
+        if "AMD" in torch.cuda.get_device_name():
             os.environ['CUDA_VISIBLE_DEVICES'] = os.environ.get('ROCR_VISIBLE_DEVICES')  
             os.environ['LOCAL_RANK'] = os.environ.get('RAY_LOCAL_RANK')  
         ###
@@ -142,14 +142,14 @@ class Worker(WorkerHelper):
         local_rank = int(os.getenv("LOCAL_RANK", "0"))
 
         ###
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        #[AMD SUPPORT: torch]
+        if "AMD" in torch.cuda.get_device_name():
             self.local_rank = int(os.environ['LOCAL_RANK'])
         ###
 
         ###
-        #[AMD SUPPORT:]
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        #[AMD SUPPORT: torch]
+        if "AMD" in torch.cuda.get_device_name():
             cuda_visible_devices = str(local_rank) 
         ###
 
@@ -168,9 +168,9 @@ class Worker(WorkerHelper):
         self._configure_with_meta(meta=meta)
 
         ###
-        #[AMD SUPPORT:]
+        #[AMD SUPPORT: torch]
         # torch.cuda.set_device(local_rank)
-        if hasattr(torch.version, 'hip') and torch.version.hip is not None:
+        if "AMD" in torch.cuda.get_device_name():
             torch.cuda.set_device(int(cuda_visible_devices))
         ###
 
