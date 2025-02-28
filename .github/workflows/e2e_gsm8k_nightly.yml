@@ -1,0 +1,54 @@
+name: e2e_gsm8k_vllm_nightly
+
+on:
+  # Trigger the workflow on push or pull request,
+  # but only for the main branch
+  push:
+    branches:
+      - main
+      - v0.2.x
+    paths:
+      - "**/*.py"
+      - .github/workflows/e2e_gsm8k_vllm_nightly.yml
+  pull_request:
+    branches:
+      - main
+      - v0.2.x
+    paths:
+      - "**/*.py"
+      - .github/workflows/e2e_gsm8k_vllm_nightly.yml
+      - "tests/e2e/*.sh"
+
+# Declare permissions just read content.
+permissions: 
+  contents: read
+
+jobs:
+  e2e_gsm8k_vllm_nightly:
+    runs-on: [self-hosted, l20-0]
+    env:
+      HTTP_PROXY: ${{ secrets.PROXY_HTTP }}
+      HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
+      NO_PROXY: "localhost,127.0.0.1"
+      HF_HUB_ENABLE_HF_TRANSFER: 1
+    container:
+      image: ml-platform-cn-beijing.cr.volces.com/test/verl:ngc-th2.4.0-cu124-vllm0.7.3-nightly-v0.0.2
+      options: --gpus all --shm-size=10g
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+            fetch-depth: 0
+      - name: Install the current repository
+        run: |
+          pip3 install hf_transfer
+          pip3 install -e .[test,gpu]
+          pip3 install --upgrade transformers>=4.49.0
+          python -c "import transformers; print(transformers.__version__)"
+      - name: Prepare gsm8k dataset
+        run: |
+          ray stop --force
+          python3 examples/data_preprocess/gsm8k.py
+      - name: Running gsm8k e2e training tests on 8 L20 GPUs with rmpad using function rm and save ckpt
+        run: |
+          ray stop --force
+          bash tests/e2e/run_qwen_gsm8k_function_rm.sh
