@@ -43,6 +43,7 @@ jobs:
         run: |
           pip3 install hf_transfer
           pip3 install -e .[test,gpu]
+          pip install opencv-python --upgrade
           python -c "import transformers; print(transformers.__version__)"
       - name: Prepare gsm8k dataset
         run: |
