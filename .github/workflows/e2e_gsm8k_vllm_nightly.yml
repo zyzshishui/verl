@@ -42,8 +42,8 @@ jobs:
       - name: Install the current repository
         run: |
           pip3 install hf_transfer
-          pip3 install -e .[test,gpu]
-          pip install opencv-python --upgrade
+          pip3 install --no-deps -e .[test,gpu]
+          pip install opencv-python==4.8.0.74
           python -c "import transformers; print(transformers.__version__)"
       - name: Prepare gsm8k dataset
         run: |
