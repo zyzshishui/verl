@@ -33,7 +33,7 @@ jobs:
       HF_HUB_ENABLE_HF_TRANSFER: 1
       HF_HOME:  ${{ secrets.HF_HOME }}
     container:
-      image: petersheng/verl:latest
+      image: hiyouga/verl:ngc-th2.5.1-cu120-vllm0.7.3
       options: --gpus all --shm-size=10g
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -43,7 +43,6 @@ jobs:
         run: |
           pip3 install hf_transfer
           pip3 install --no-deps -e .[test,gpu]
-          pip install opencv-python==4.8.0.74
           python -c "import transformers; print(transformers.__version__)"
       - name: Prepare gsm8k dataset
         run: |
