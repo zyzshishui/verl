@@ -1,41 +1,58 @@
-# Setup
+# Setup 
 
-## Docker (Optional):
-Find the docker here: https://hub.docker.com/r/rocm/vllm/tags (rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4)
+## Dockerfile.rocm 
+```bash
+FROM rocm/vllm:rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4
+
+# Set working directory
+WORKDIR /app
+
+# Set environment variables
+ENV PYTORCH_ROCM_ARCH="gfx90a;gfx942" \
+    MAX_JOBS=$(nproc)
+
+# Install vllm
+RUN pip uninstall -y vllm && \
+    git clone -b v0.6.3 https://github.com/vllm-project/vllm.git && \
+    cd vllm && \
+    python3 setup.py install && \
+    cd .. && \
+    rm -rf vllm
+
+# Copy and install dependencies
+COPY requirements_amd_no_deps.txt requirements_amd.txt ./
+RUN pip install -r requirements_amd_no_deps.txt --no-deps && \
+    pip install -r requirements_amd.txt && \
+    pip install -e . --no-deps
+
+# Set container port
+EXPOSE 8265
+
+# Shared memory size will be set during docker run with --shm-size 128G
+```
+
+
+## Build the image:
+``bash
+docker build -t vllm-rocm .
+```
+
+## Run the container
 ```bash
 docker run --rm -it \
   --device /dev/dri \
   --device /dev/kfd \
-  --network host \
-  --ipc host \
+  -p 8265:8265 \
   --group-add video \
   --cap-add SYS_PTRACE \
   --security-opt seccomp=unconfined \
   --privileged \
-  -v /home/yushensu:/home/yushensu \
   -v $HOME/.ssh:/root/.ssh \
+  -v $HOME:$HOME \
   --shm-size 128G \
-  --name verl_vllm_upstream \
   -w $PWD \
-  rocm/vllm:rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4 \
+  vllm-rocm \
   /bin/bash
-```
-
-## Build ROCM vLLM:
-```bash
-pip uninstall vllm
-git clone https://github.com/vllm-project/vllm.git
-cd vllm
-git checkout v0.6.3
-export PYTORCH_ROCM_ARCH="gfx90a;gfx942"
-python3 setup.py develop
-cd ..
-```
-
-## Install the require packages:
-```bash
-pip install -r requirements_amd_no_deps.txt --no-deps
-pip install -r requirements_amd.txt
 ```
 
 
@@ -45,18 +62,13 @@ pip install -r requirements_amd.txt
 ```bash
 YOUR_PROJECT_NAME=r1-verl-ppo-upstream
 YOUR_RUN_NAME=r1-training_ppo-upstream 
-
 # export HYDRA_FULL_ERROR=1
-
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export ROCR_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES
 GPUS_PER_NODE=8
-
 MODEL_PATH=Qwen/Qwen2.5-0.5B-Instruct
 python3 examples/data_preprocess/gsm8k.py --local_dir data/gsm8k
 python3 -c "import transformers; transformers.pipeline('text-generation', model='$MODEL_PATH')"
-
-
 PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
  data.train_files=data/gsm8k/train.parquet \
  data.val_files=data/gsm8k/test.parquet \
@@ -93,22 +105,15 @@ PYTHONUNBUFFERED=1 python3 -m verl.trainer.main_ppo \
 ```bash
 YOUR_PROJECT_NAME=r1-verl-grpo-upstream
 YOUR_RUN_NAME=r1-training_grpo-upstream
-
 # export HYDRA_FULL_ERROR=1
 # export FSDP_VERBOSE=1 
-
 export HIP_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 export ROCR_VISIBLE_DEVICES=$HIP_VISIBLE_DEVICES
-
 GPUS_PER_NODE=8
-
 MODEL_PATH=Qwen/Qwen2.5-0.5B-Instruct
 # MODEL_PATH=Qwen/Qwen2-7B-Instruct
-
 python3 examples/data_preprocess/gsm8k.py --local_dir data/gsm8k
-
 python3 -c "import transformers; transformers.pipeline('text-generation', model='$MODEL_PATH')"
-
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     data.train_files=data/gsm8k/train.parquet \

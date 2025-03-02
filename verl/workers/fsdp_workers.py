@@ -403,7 +403,7 @@ class ActorRolloutRefWorker(Worker):
     def update_actor(self, data: DataProto):
         ###
         # data = data.to('cuda')
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
@@ -418,7 +418,7 @@ class ActorRolloutRefWorker(Worker):
 
         ###
         # data.batch = data.batch.cuda()
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             data.batch = data.batch.to(torch.cuda.current_device()) 
         else:
@@ -460,7 +460,7 @@ class ActorRolloutRefWorker(Worker):
     def generate_sequences(self, prompts: DataProto):
         ###
         # prompts = prompts.to('cuda')
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             prompts = prompts.to(torch.cuda.current_device()) 
         else:
@@ -473,7 +473,7 @@ class ActorRolloutRefWorker(Worker):
 
         ###
         # prompts.batch = prompts.batch.cuda()
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
                 prompts.batch = prompts.batch.to(torch.cuda.current_device()) 
         else:
@@ -519,7 +519,7 @@ class ActorRolloutRefWorker(Worker):
             load_fsdp_model_to_gpu(self.actor_module_fsdp)
         ###
         # data = data.to('cuda')
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
@@ -559,7 +559,7 @@ class ActorRolloutRefWorker(Worker):
 
         ###
         # data = data.to('cuda')
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
@@ -803,7 +803,7 @@ class CriticWorker(Worker):
     def compute_values(self, data: DataProto):
         ###
         # data = data.to('cuda')
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
@@ -832,7 +832,7 @@ class CriticWorker(Worker):
     def update_critic(self, data: DataProto):
         ###
         # data = data.to('cuda')
-        # [AMD SUPPORT:]
+        # [SUPPORT AMD:]
         if "AMD" in torch.cuda.get_device_name():
             data = data.to(torch.cuda.current_device()) 
         else:
@@ -1133,11 +1133,25 @@ class RewardModelWorker(Worker):
     def compute_rm_score(self, data: DataProto):
         import itertools
         from verl.utils.seqlen_balancing import rearrange_micro_batches, get_reverse_idx
-        data = data.to('cuda')
+        ###
+        # data = data.to('cuda')
+        # [SUPPORT AMD:]
+        if "AMD" in torch.cuda.get_device_name():
+            data = data.to(torch.cuda.current_device()) 
+        else:
+            data = data.to('cuda')
+        ###
         if self._do_switch_chat_template:
             rm_data = self._switch_chat_template(data)
 
-        rm_data.batch = rm_data.batch.cuda()
+        ###
+        # rm_data.batch = rm_data.batch.cuda()
+        # [SUPPORT AMD:]
+        if "AMD" in torch.cuda.get_device_name():
+            rm_data.batch = rm_data.batch.to(torch.cuda.current_device()) 
+        else:
+            rm_data.batch = rm_data.batch.cuda()
+        ###
 
         # perform forward computation
         with self.ulysses_sharding_manager:

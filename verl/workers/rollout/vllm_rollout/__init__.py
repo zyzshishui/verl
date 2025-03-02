@@ -15,7 +15,7 @@
 from importlib.metadata import version, PackageNotFoundError
 
 ###
-# [AMD SUPPORT:]
+# [SUPPORT AMD:]
 import torch
 ###
 
@@ -32,7 +32,7 @@ package_version = get_version(package_name)
 
 ###
 # package_version = get_version(package_name)
-# [AMD SUPPORT:]
+# [SUPPORT AMD:]
 if "AMD" in torch.cuda.get_device_name():
     import re
     package_version = version(package_name)

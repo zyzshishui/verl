@@ -323,7 +323,7 @@ def compute_timing_metrics(batch, timing_raw):
     }
 
 ###
-# [AMD SUPPORT:]
+# [SUPPORT AMD:]
 def compute_throughout_metrics(batch, timing_raw, n_gpus):
     total_num_tokens = sum(batch.meta_info['global_token_num'])
     time = timing_raw["step"]
@@ -993,7 +993,7 @@ class RayPPOTrainer(object):
                 metrics.update(compute_timing_metrics(batch=batch, timing_raw=timing_raw))
                 
                 ###
-                # [AMD SUPPORT:]
+                # [SUPPORT AMD:]
                 config = self.config
                 n_gpus = config.trainer.n_gpus_per_node * config.trainer.nnodes
                 # Implement actual tflpo and theoretical tflpo  

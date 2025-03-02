@@ -34,7 +34,7 @@ def get_device_flops(unit="T"):
     flops = float("inf")  # INF flops for unkown gpu type
     
     ###
-    # [AMD SUPPORT:] 
+    # [SUPPORT AMD:] 
     # if "MI300X" in device_name 
     if "MI300X" in device_name: 
         flops = 1336e12

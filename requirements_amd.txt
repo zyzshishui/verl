@@ -1,5 +1,22 @@
+accelerate
 codetiming
+datasets
+dill
 hydra-core
+liger-kernel
+numpy
+pandas
+peft
+pyarrow>=15.0.0
 pybind11
+pylatexenc
+ray[data,train,tune,serve]
+transformers
 wandb
 orjson
+
+# codetiming
+# hydra-core
+# pybind11
+# wandb
+# orjson
