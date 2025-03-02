@@ -10,8 +10,8 @@ docker_run_vllm.sh
 run_grpo.sh
 run_ppo.sh
 run_test.sh
-#setup_amd.py
-#setup_org.py
+setup_amd.py
+setup_org.py
 
 
 **/*.pt
