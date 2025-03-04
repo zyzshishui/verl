@@ -33,8 +33,8 @@ EXPOSE 8265
 
 
 ## Build the image:
-``bash
-docker build -t vllm-rocm .
+```bash
+docker build -t verl-rocm .
 ```
 
 ## Run the container
@@ -51,7 +51,7 @@ docker run --rm -it \
   -v $HOME:$HOME \
   --shm-size 128G \
   -w $PWD \
-  vllm-rocm \
+  verl-rocm \
   /bin/bash
 ```
 

@@ -233,7 +233,7 @@ class DataParallelPPOActor(BasePPOActor):
                 for data in micro_batches:
                     ###
                     # data = data.cuda() # actor device is cpu when using offload
-                    #[SUPPORT AMD: torch]
+                    #[SUPPORT AMD:]
                     if "AMD" in torch.cuda.get_device_name():
                         data = data.to(torch.cuda.current_device()) 
                     else:

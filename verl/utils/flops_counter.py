@@ -33,9 +33,7 @@ def get_device_flops(unit="T"):
     device_name = torch.cuda.get_device_name()
     flops = float("inf")  # INF flops for unkown gpu type
     
-    ###
-    # [SUPPORT AMD:] 
-    # if "MI300X" in device_name 
+
     if "MI300X" in device_name: 
         flops = 1336e12
     elif "H100" in device_name or "H800" in device_name:
