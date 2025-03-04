@@ -125,9 +125,10 @@ class NaiveRewardManager:
             valid_response_length = data_item.batch['attention_mask'][prompt_length:].sum()
             valid_response_ids = response_ids[:valid_response_length]
 
-            sequences = torch.cat((valid_prompt_ids, valid_response_ids))
-            sequences_str = self.tokenizer.decode(sequences)
+            # decode
             prompt_str = self.tokenizer.decode(valid_prompt_ids)
+            response_str = self.tokenizer.decode(valid_response_ids)
+
             ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
             data_source = data_item.non_tensor_batch['data_source']
             extra_info = data_item.non_tensor_batch.get('extra_info', None)
@@ -135,7 +136,7 @@ class NaiveRewardManager:
             # print(f"naive reward manager {self.tokenizer=}")
             score = self.compute_score(
                 data_source=data_source,
-                solution_str=sequences_str,
+                solution_str=response_str,
                 ground_truth=ground_truth,
                 extra_info=extra_info,
                 question=prompt_str,
@@ -149,11 +150,11 @@ class NaiveRewardManager:
             for i, valid_response_length, score, data_source, sequences_str in results:
                 reward_tensor[i, valid_response_length - 1] = score
 
-                if data_source not in already_print_data_sources:
-                    already_print_data_sources[data_source] = 0
-
-                if already_print_data_sources[data_source] < self.num_examine:
-                    already_print_data_sources[data_source] += 1
-                    # print(sequences_str)
+            if already_print_data_sources[data_source] < self.num_examine:
+                already_print_data_sources[data_source] += 1
+                print("[prompt]", prompt_str)
+                print("[response]", response_str)
+                print("[ground_truth]", ground_truth)
+                print("[score]", score)
 
         return reward_tensor
