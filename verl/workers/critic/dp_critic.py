@@ -202,7 +202,7 @@ class DataParallelPPOCritic(BasePPOCritic):
                     if isinstance(data, DataProto):
                         data = {**data.batch.to(torch.cuda.current_device()), **data.non_tensor_batch}
                     else:
-                        data = data.to(torch.cuda.current_device()) # critic device is cpu when using offload
+                        data = data.to(torch.cuda.current_device())  # critic device is cpu when using offload
                     input_ids = data['input_ids']
                     responses = data['responses']
                     attention_mask = data['attention_mask']

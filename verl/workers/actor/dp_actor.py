@@ -268,7 +268,7 @@ class DataParallelPPOActor(BasePPOActor):
                     if isinstance(data, DataProto):
                         data = {**data.batch.to(torch.cuda.current_device()), **data.non_tensor_batch}
                     else:
-                        data = data.to(torch.cuda.current_device()) # actor device is cpu when using offload 
+                        data = data.to(torch.cuda.current_device())  # actor device is cpu when using offload
                     responses = data['responses']
                     response_length = responses.size(1)
                     attention_mask = data['attention_mask']

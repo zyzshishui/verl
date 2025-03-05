@@ -37,7 +37,7 @@ if "AMD" in torch.cuda.get_device_name():
     import re
     package_version = version(package_name)
     package_version = re.match(r'(\d+\.\d+\.?\d*)', package_version).group(1)
-else:   
+else:
     package_version = get_version(package_name)
 ###
 

@@ -127,10 +127,10 @@ class Worker(WorkerHelper):
         ###
         # [SUPPORT AMD: torch]
         if "AMD" in torch.cuda.get_device_name():
-            os.environ['CUDA_VISIBLE_DEVICES'] = os.environ.get('ROCR_VISIBLE_DEVICES')  
-            os.environ['LOCAL_RANK'] = os.environ.get('RAY_LOCAL_RANK')  
+            os.environ['CUDA_VISIBLE_DEVICES'] = os.environ.get('ROCR_VISIBLE_DEVICES')
+            os.environ['LOCAL_RANK'] = os.environ.get('RAY_LOCAL_RANK')
         ###
-        
+
         world_size = int(os.environ['WORLD_SIZE'])
         rank = int(os.environ['RANK'])
         self._rank = rank
@@ -151,7 +151,7 @@ class Worker(WorkerHelper):
         ###
         # [SUPPORT AMD: torch]
         if "AMD" in torch.cuda.get_device_name():
-            cuda_visible_devices = str(local_rank) 
+            cuda_visible_devices = str(local_rank)
         ###
 
         store = {
