@@ -36,8 +36,26 @@ rm -rf vllm
 
 ## Install the require packages:
 ```bash
-pip install -r requirements_amd_no_deps.txt --no-deps
-pip install -r requirements_amd.txt
+pip install "tensordict<0.6" --no-deps
+
+pip install accelerate \
+    codetiming \
+    datasets \
+    dill \
+    hydra-core \
+    liger-kernel \
+    numpy \
+    pandas \
+    peft \
+    "pyarrow>=15.0.0" \
+    pylatexenc \
+    "ray[data,train,tune,serve]" \
+    torchdata \
+    transformers \
+    wandb \
+    orjson \
+    pybind11
+
 pip install -e . --no-deps
 ```
 
