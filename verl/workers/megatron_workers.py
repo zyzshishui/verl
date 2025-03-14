@@ -367,7 +367,9 @@ class ActorRolloutRefWorker(MegatronWorker):
 
         log_gpu_memory_usage('After update policy', logger=logger)
 
-        output = DataProto(non_tensor_batch={metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()})
+        output = DataProto(non_tensor_batch={
+            metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()
+        })
         torch.cuda.empty_cache()
         return output
 
@@ -645,7 +647,9 @@ class CriticWorker(MegatronWorker):
         global_num_tokens = data.meta_info['global_token_num']
         estimated_flops, promised_flops = self.flops_counter.estimate_flops(global_num_tokens, delta_time)
         metrics['mfu/critic'] = estimated_flops * self.config.ppo_epochs / promised_flops / self.world_size
-        output = DataProto(non_tensor_batch={metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()})
+        output = DataProto(non_tensor_batch={
+            metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()
+        })
         return output
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
