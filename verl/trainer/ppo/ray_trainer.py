@@ -1023,7 +1023,7 @@ class RayPPOTrainer(object):
                     if self.use_critic:
                         with _timer('update_critic', timing_raw):
                             critic_output = self.critic_wg.update_critic(batch)
-                        critic_output_metrics = reduce_metrics(critic_output.meta_info['metrics'])
+                        critic_output_metrics = reduce_metrics(critic_output.non_tensor_batch)
                         metrics.update(critic_output_metrics)
 
                     # implement critic warmup
@@ -1031,7 +1031,7 @@ class RayPPOTrainer(object):
                         # update actor
                         with _timer('update_actor', timing_raw):
                             actor_output = self.actor_rollout_wg.update_actor(batch)
-                        actor_output_metrics = reduce_metrics(actor_output.meta_info['metrics'])
+                        actor_output_metrics = reduce_metrics(actor_output.non_tensor_batch)
                         metrics.update(actor_output_metrics)
 
                     # validate
