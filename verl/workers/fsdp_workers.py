@@ -442,7 +442,7 @@ class ActorRolloutRefWorker(Worker):
             log_gpu_memory_usage('After update policy', logger=logger)
 
             # Metrics should be in non_tensor_batch instead of meta_info, as DataProto not concat meta_info.
-            output = DataProto(non_tensor_batch={metric: np.array(value) for metric, value in metrics.items()})
+            output = DataProto(non_tensor_batch={metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()})
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
@@ -822,7 +822,7 @@ class CriticWorker(Worker):
             lr = self.critic_lr_scheduler.get_last_lr()[0]
             metrics['critic/lr'] = lr
 
-            output = DataProto(non_tensor_batch={metric: np.array(value) for metric, value in metrics.items()})
+            output = DataProto(non_tensor_batch={metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()})
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.critic_module)
