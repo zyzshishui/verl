@@ -412,7 +412,8 @@ class RayPPOTrainer(object):
                                          filter_prompts=True,
                                          return_raw_chat=self.config.data.get('return_raw_chat', False),
                                          truncation='error',
-                                         filter_overlong_prompts=self.config.data.filter_overlong_prompts)
+                                         filter_overlong_prompts=self.config.data.filter_overlong_prompts,
+                                         verifier_types=self.config.data.train_verifier_types)
         # use sampler for better ckpt resume
         if self.config.data.shuffle:
             train_dataloader_generator = torch.Generator()
@@ -437,7 +438,8 @@ class RayPPOTrainer(object):
                                        filter_prompts=True,
                                        return_raw_chat=self.config.data.get('return_raw_chat', False),
                                        truncation='error',
-                                       filter_overlong_prompts=self.config.data.filter_overlong_prompts)
+                                       filter_overlong_prompts=self.config.data.filter_overlong_prompts,
+                                       verifier_types=self.config.data.val_verifier_types)
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,
             # Validation datasets are sent to inference engines as a whole batch,

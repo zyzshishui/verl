@@ -14,17 +14,19 @@
 # from . import gsm8k, math, prime_math, prime_code
 
 
-def _default_compute_score(data_source, solution_str, ground_truth, extra_info=None):
+def _default_compute_score(data_source, solution_str, ground_truth, extra_info=None, verifier_type=None):
     if data_source == 'openai/gsm8k':
         from . import gsm8k
         res = gsm8k.compute_score(solution_str, ground_truth)
     elif data_source in ['lighteval/MATH', 'DigitalLearningGmbH/MATH-lighteval']:
-        # from . import math
-        # res = math.compute_score(solution_str, ground_truth)
-
-        # Use Math-Verify (https://github.com/huggingface/Math-Verify) for better evaluation accuracy
-        from . import math_verify
-        res = math_verify.compute_score(solution_str, ground_truth)
+        if verifier_type is not None:
+            if verifier_type == "math_verify":
+                # Use Math-Verify (https://github.com/huggingface/Math-Verify) for better evaluation accuracy
+                from . import math_verify
+                res = math_verify.compute_score(solution_str, ground_truth)
+        else:   
+            from . import math
+            res = math.compute_score(solution_str, ground_truth)
     elif data_source in [
             'numina_aops_forum', 'numina_synthetic_math', 'numina_amc_aime', 'numina_synthetic_amc', 'numina_cn_k12',
             'numina_olympiads'

@@ -49,6 +49,8 @@ class NaiveRewardManager:
             ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
 
             data_source = data_item.non_tensor_batch['data_source']
+            
+            verifier_type = data_item.non_tensor_batch.get('verifier_type', None)
 
             extra_info = data_item.non_tensor_batch.get('extra_info', None)
 
@@ -57,6 +59,7 @@ class NaiveRewardManager:
                 solution_str=response_str,
                 ground_truth=ground_truth,
                 extra_info=extra_info,
+                verifier_type=verifier_type,
             )
             scores.append(score)
         data.batch['acc'] = torch.tensor(scores, dtype=torch.float32, device=prompt_ids.device)
@@ -94,6 +97,8 @@ class NaiveRewardManager:
             ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
 
             data_source = data_item.non_tensor_batch['data_source']
+            
+            verifier_type = data_item.non_tensor_batch.get('verifier_type', None)
 
             extra_info = data_item.non_tensor_batch.get('extra_info', None)
 
@@ -102,6 +107,7 @@ class NaiveRewardManager:
                 solution_str=response_str,
                 ground_truth=ground_truth,
                 extra_info=extra_info,
+                verifier_type=verifier_type,
             )
             reward_tensor[i, valid_response_length - 1] = score
 

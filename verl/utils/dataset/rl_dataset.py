@@ -89,10 +89,19 @@ class RLHFDataset(Dataset):
                  chat_template_func=None,
                  return_raw_chat=False,
                  truncation='error',
-                 filter_overlong_prompts=False):
+                 filter_overlong_prompts=False,
+                 verifier_types: Optional[List[str]]=None):
         if not isinstance(parquet_files, (List, ListConfig)):
             parquet_files = [parquet_files]
-
+        
+        if verifier_types is not None:
+            if not isinstance(verifier_types, List):
+                verifier_types = [verifier_types]
+            
+            assert len(verifier_types) == len(parquet_files), \
+            'if specifying the verifier types, the number of verifier types should be equal to number of datasets (len(parquet_files))'
+            self.verifier_types = verifier_types
+            
         self.parquet_files = copy.deepcopy(parquet_files)
         self.original_parquet_files = copy.deepcopy(parquet_files)  # use for resume
         self.cache_dir = os.path.expanduser(cache_dir)
@@ -123,9 +132,12 @@ class RLHFDataset(Dataset):
 
     def _read_files_and_tokenize(self):
         dataframes = []
-        for parquet_file in self.parquet_files:
+        for i, parquet_file in enumerate(self.parquet_files):
             # read parquet files and cache
             dataframe = pd.read_parquet(parquet_file)
+            if hasattr(self, 'verifier_types'):
+                # Add user-specified verifier type as a column for each dataframe
+                dataframe['verifier_type'] = self.verifier_types[i]
             dataframes.append(dataframe)
         self.dataframe = pd.concat(dataframes)
 
