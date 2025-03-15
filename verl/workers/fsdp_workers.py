@@ -19,7 +19,6 @@ import logging
 import os
 import warnings
 
-import numpy as np
 import torch
 import torch.distributed
 from torch.distributed.device_mesh import init_device_mesh
@@ -441,10 +440,11 @@ class ActorRolloutRefWorker(Worker):
 
             log_gpu_memory_usage('After update policy', logger=logger)
 
-            # Metrics should be in non_tensor_batch instead of meta_info, as DataProto not concat meta_info.
-            output = DataProto(non_tensor_batch={
-                metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()
-            })
+            # TODO: here, we should return all metrics
+            output = DataProto(meta_info={'metrics': metrics})
+
+            output = self.ulysses_sharding_manager.postprocess_data(data=output)
+            output = output.to('cpu')
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.actor_module_fsdp)
@@ -824,9 +824,8 @@ class CriticWorker(Worker):
             lr = self.critic_lr_scheduler.get_last_lr()[0]
             metrics['critic/lr'] = lr
 
-            output = DataProto(non_tensor_batch={
-                metric: np.array([value] if np.isscalar(value) else value) for metric, value in metrics.items()
-            })
+            output = DataProto(batch=None, meta_info={'metrics': metrics})
+            output = self.ulysses_sharding_manager.postprocess_data(data=output)
 
         if self._is_offload_param:
             offload_fsdp_model_to_cpu(self.critic_module)
