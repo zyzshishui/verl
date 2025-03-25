@@ -197,7 +197,7 @@ GRPO
 
 
 
-(Multi-node training) slurm with Docker/Podman container
+Multi-node training: slurm with Docker/Podman container
 ---------------------------------------------------------------------------------------
 
 If you want to run multi-node training with slurm, you can use the following script. 
