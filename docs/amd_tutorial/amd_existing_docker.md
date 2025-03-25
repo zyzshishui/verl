@@ -2,6 +2,10 @@
 
 ## Docker:
 Find the docker here: https://hub.docker.com/r/rocm/vllm/tags (rocm6.2_mi300_ubuntu20.04_py3.9_vllm_0.6.4)
+
+### (Optional): If you do not want to root mode and require assign yuorself as the user
+Please add `-e HOST_UID=$(id -u)` and `-e HOST_GID=$(id -g)` into the following docker launch script. 
+
 ```bash
 docker run --rm -it \
   --device /dev/dri \
