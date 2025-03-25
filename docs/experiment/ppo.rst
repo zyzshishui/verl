@@ -24,6 +24,8 @@ NVIDIA GPUs
 .. _Megatron wandb: https://wandb.ai/verl-team/verl_megatron_gsm8k_examples/runs/10fetyr3
 .. _Qwen7b ReMax Script: https://github.com/eric-haibin-lin/verl/blob/main/examples/remax_trainer/run_qwen2.5-3b_seq_balance.sh
 .. _Qwen7b ReMax Wandb: https://wandb.ai/liziniu1997/verl_remax_example_gsm8k/runs/vxl10pln
+.. _Qwen0.5b PRIME Script: https://github.com/volcengine/verl/blob/main/recipe/prime/run_prime_qwen.sh
+.. _Qwen0.5b PRIME Wandb: https://api.wandb.ai/links/zefan-wang-thu-tsinghua-university/rxd1btvb
 
 +----------------------------------+-----------------------+------------+-----------------------------------------------------+
 | Model                            | Method                | Test score | Details                                             |
@@ -54,13 +56,13 @@ AMD GPUs (MI300)
 .. _ppo_run_deepseek7b_llm.sh:  https://github.com/yushengsu-thu/verl_training_log/blob/main/gsm8k/ppo_run_deepseek7b_llm.log
 .. _grpo_run_deepseek7b_llm.sh: https://github.com/yushengsu-thu/verl_training_log/blob/main/gsm8k/grpo_run_deepseek7b_llm.log
 
-+----------------------------------+------------------------+------------+-----------------------------------------------------------------------------------------------+
-| Model                            | Method                 | Test score |  Details                                                                                      |
-+==================================+========================+============+=====================+=========================================================================+
-| deepseek-ai/deepseek-llm-7b-chat | PPO                    | 70.5 [1]_  |   `ppo_run_deepseek7b_llm.sh`_                                         |
-+----------------------------------+------------------------+------------+-----------------------------------------------------------------------------------------------+
-| deepseek-ai/deepseek-llm-7b-chat | GRPO                   | 71.4 [1]_  |   `grpo_run_deepseek7b_llm.sh`_                                         |
-+----------------------------------+------------------------+------------+-----------------------------------------------------------------------------------------------+
++----------------------------------+------------------------+------------+-----------------------------------------------------+
+| Model                            | Method                 | Test score |  Details                                            |
++==================================+========================+============+=====================+===============================+
+| deepseek-ai/deepseek-llm-7b-chat | PPO                    | 70.5 [1]_  |   `ppo_run_deepseek7b_llm.sh`_                      |                   
++----------------------------------+------------------------+------------+-----------------------------------------------------+
+| deepseek-ai/deepseek-llm-7b-chat | GRPO                   | 71.4 [1]_  |   `grpo_run_deepseek7b_llm.sh`_                     |                   
++----------------------------------+------------------------+------------+------------------------------------------------------
 
 
 

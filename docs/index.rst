@@ -33,7 +33,6 @@ verl is fast with:
    start/install
    start/quickstart
    start/multinode
-   amd_tutorial/amd_build_dockerfile_page
 
 .. toctree::
    :maxdepth: 4
