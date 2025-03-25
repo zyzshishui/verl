@@ -26,12 +26,12 @@ permissions:
 jobs:
   e2e_vlm_geo3k:
     runs-on: [self-hosted, l20-1]
+    timeout-minutes: 10 # Increase this timeout value as needed
     env:
       HTTP_PROXY: ${{ secrets.PROXY_HTTP }}
       HTTPS_PROXY: ${{ secrets.PROXY_HTTPS }}
       NO_PROXY: "localhost,127.0.0.1"
       HF_HUB_ENABLE_HF_TRANSFER: 1
-      HF_HOME:  ${{ secrets.HF_HOME }}
     container:
       image: hiyouga/verl:ngc-th2.5.1-cu120-vllm0.7.3-rc1
       options: --gpus all --shm-size=40g

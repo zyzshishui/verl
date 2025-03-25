@@ -27,8 +27,9 @@ def _megatron_calc_layer_map(config):
             mapping from the global layer index to
             a tuple of (pp_rank, virtual_pp_rank, layer_idx inside model)
     """
-    import megatron
     from megatron.core import mpu
+
+    print(f'get megatron data parallel size: {mpu.get_data_parallel_world_size()}')
 
     pp_size = mpu.get_pipeline_model_parallel_world_size()
     virtual_pp_size = mpu.get_virtual_pipeline_model_parallel_world_size() or 1
@@ -50,12 +51,16 @@ def _megatron_calc_layer_map(config):
     return layer_map
 
 
-def load_state_dict_to_megatron_llama(state_dict, wrapped_models, config, params_dtype, is_value_model=False):
+def load_state_dict_to_megatron_llama(state_dict,
+                                      wrapped_models,
+                                      config,
+                                      params_dtype,
+                                      is_value_model=False,
+                                      tie_word_embeddings=False):
     """Load merged state_dict to sharded Megatron module in training.
     """
-    import megatron
     from megatron.core import mpu
-    from megatron.training.utils import print_rank_0, unwrap_model
+    from verl.utils.megatron_utils import print_rank_0, unwrap_model
     from megatron.core.transformer.module import Float16Module
     from megatron.core import DistributedDataParallel as LocalDDP
     from torch.nn.parallel import DistributedDataParallel as torchDDP
@@ -87,7 +92,7 @@ def load_state_dict_to_megatron_llama(state_dict, wrapped_models, config, params
 
     assert len(wrapped_models) == virtual_pp_size
     num_layers_per_model = config.num_hidden_layers // pp_size // virtual_pp_size
-    assert num_layers_per_model * pp_size * virtual_pp_size == config.num_hidden_layers
+    assert num_layers_per_model * pp_size * virtual_pp_size == config.num_hidden_layers, f'num_layers_per_model: {num_layers_per_model} * pp_size: {pp_size} * virtual_pp_size {virtual_pp_size} != config.num_hidden_layers: {config.num_hidden_layers}'
 
     models = [None] * len(wrapped_models)
 
@@ -424,19 +429,15 @@ def load_state_dict_to_megatron_llama(state_dict, wrapped_models, config, params
             lm_head_weight = gpt_model_module.lm_head.weight
 
         if is_value_model:
-            # if torch.distributed.get_rank() == 0:
             if 'lm_head.weight' in state_dict and state_dict['lm_head.weight'].shape[0] == 1:
                 _broadcast_tensor(lm_head_weight, "lm_head.weight")
+                print_rank_0('load lm_head weight')
             elif 'reward_head.weight' in state_dict and state_dict['reward_head.weight'].shape[0] == 1:
                 _broadcast_tensor(lm_head_weight, "reward_head.weight")
                 print_rank_0('load lm_head from value_head weight')
             else:
                 _broadcast_tensor(None, "lm_head.weight")
                 print_rank_0('fail to match lm_head in value_model')
-            # else:
-
-            #     _broadcast_tensor(lm_head_weight, "lm_head.weight")
-
         else:
             _broadcast_tp_shard_tensor(lm_head_weight, "lm_head.weight")
     dist.barrier()
