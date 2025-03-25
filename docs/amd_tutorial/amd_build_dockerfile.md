@@ -53,6 +53,9 @@ RUN pip install "tensordict<0.6" --no-deps && \
 docker build -t verl-rocm .
 ```
 
+### (Optional): If you do not want to root mode and require assign yuorself as the user
+Please add `-e HOST_UID=$(id -u)` and `-e HOST_GID=$(id -g)` into the following docker launch script. 
+
 ## Run the container
 ```bash
 docker run --rm -it \
