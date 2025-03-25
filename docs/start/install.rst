@@ -457,4 +457,4 @@ Launch the container
 (Optional): If you do not want to root mode and require assign yuorself as the user
 Please add ``-e HOST_UID=$(id -u)`` and ``-e HOST_GID=$(id -g)`` into the above docker launch script. 
 
-
+(Currently Support): Training Engine: FSDP; Inference Engine: vLLM - We will support Megatron and SGLang in the future.
