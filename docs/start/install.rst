@@ -120,7 +120,7 @@ Megatron is optional. It's dependencies can be setup as below:
    # You can also get the patched Megatron code patch via
    # git clone -b core_v0.4.0_verl https://github.com/eric-haibin-lin/Megatron-LM
 
-Install (Support AMD GPUs - ROCM Kernel)
+Install with AMD GPUs - ROCM kernel support
 ------------------------------------------------------------------
 
 When you run on AMD GPUs (MI300) with ROCM platform, you cannot use the previous quickstart to run VeRL. You should follow the following steps to build a docker and run it. 
