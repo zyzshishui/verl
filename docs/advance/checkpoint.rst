@@ -89,4 +89,27 @@ So example use of Megatron model merger is:
 Megatron Merger details
 -----------------------
 
-Current implement of decoder layers use ``nn.ModuleList`` to store the layers, but not modify
+Current implement of decoder layers uses ``nn.ModuleList`` to store the layers, 
+and thus the model layers on every PP rank and VPP rank starts their index from 0.
+
+There are 3 ways to correct this behavior:
+
+1. Modify the decoder layer's state_dict, add ``offset`` to each layer's index, thus rewrite ``nn.ModuleList`` implementation.
+2. Modify the layer index when saving checkpoint and recover them when loading checkpoint.
+3. The Checkpoint merger do this work, calculate the actual ``offset`` from ``state_dict`` only, a little complex.
+
+Current implementation use solution 2. And solution 1 is also helpful.
+
+Original Checkpoint Utils
+-------------------------
+
+Original Checkpoint Utils refer to original checkpoint implementation in ``verl/models/[model]/megatron/checkpoint_utils``.
+
+We only need ``[model]_loader.py`` in original checkpoint utils now, since we get rid of storing ``hf_model`` every time (which is not recommended for large model training, try only saving sharded models if you can).
+
+.. note:: 
+
+    Note that ``[model]_loader`` only support environments where storage clusters are able to connect with every calculation nodes. 
+    Because it utilizes sharded load way to minimize the loading checkpoint overhead. 
+    Every rank loads its own data from ``state_dict`` which can be accessed by all of them.
+    While there is also no need to broadcast among DP ranks, since the saved state_dict is only produced by DP rank 0.
