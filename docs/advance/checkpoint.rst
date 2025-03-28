@@ -39,7 +39,7 @@ So the inner checkpoint structure of **FSDP** is like:
 
 All model shards, optimizers and extra states are stored togather, in a sharded and distributed way.
 
-While Megatron current checkpoint structure is:
+While **Megatron** current checkpoint structure is:
 
 .. code::
 
@@ -109,9 +109,11 @@ We only need ``[model]_loader.py`` in original checkpoint utils now, since we ge
 
 .. note:: 
 
-    Note that ``[model]_loader`` only support environments where storage clusters are able to connect with every calculation nodes. 
-    Because it utilizes sharded load way to minimize the loading checkpoint overhead. 
+    Note that ``[model]_loader`` only support environments where **storage clusters are able to connect with every calculation nodes**. 
+    Because it utilizes **sharded load way to minimize the loading checkpoint overhead**. 
     Every rank loads its own data from ``state_dict`` which can be accessed by all of them.
     While there is also no need to broadcast among DP ranks, since the saved state_dict is only produced by DP rank 0.
 
-    For users who can only place the huggingface model on one device, we keep the original costly implementation in ``[model]_loader_deprecated``. In this implementation, rank 0 broadcast all weights to each tp and pp rank, and then dp rank 0 broadcast to all dp ranks. There may be at risks of OOM.
+    For users who can **only place the huggingface model on one device**, we keep the original costly implementation in ``[model]_loader_deprecated``. In this implementation, rank 0 broadcast all weights to each tp and pp rank, and then dp rank 0 broadcast to all dp ranks. There may be at risks of OOM.
+
+    To use deprecated loader, change the import package of ``load_state_dict_to_megatron_llama``.
