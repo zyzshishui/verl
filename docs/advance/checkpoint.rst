@@ -73,6 +73,8 @@ The arguments are as follows:
 .. code:: bash
 
     usage: model_merger.py [-h] [--backend {fsdp,megatron}]
+                           [--tie-word-embedding whether the model share embedding weights]
+                           [--is-value-model whether the model is critic model]
                            [--hf_model_path $original_model_path, like {Qwen/Qwen2-7B}]
                            [--local_dir $local_directory saved fsdp or megatron models]
                            [--target_dir $target_dir to save converted models, default is tmp]
@@ -83,6 +85,7 @@ So example use of Megatron model merger is:
 .. code:: bash
 
     python3 scripts/model_merger.py --backend megatron \
+        --is-value-model \
         --hf_model_path Qwen/Qwen2-7B \
         --local_dir checkpoints/verl_megatron_gsm8k_examples/deepseek_megatron_checkpoint_saveload/global_step_1/actor/model
 
@@ -98,7 +101,7 @@ There are 3 ways to correct this behavior:
 2. Modify the layer index when saving checkpoint and recover them when loading checkpoint.
 3. The Checkpoint merger do this work, calculate the actual ``offset`` from ``state_dict`` only, a little complex.
 
-Current implementation use solution 2. While solution 1 is also helpful.
+Current implementation use solution 2.
 
 Original Checkpoint Utils
 -------------------------
