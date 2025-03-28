@@ -98,7 +98,7 @@ There are 3 ways to correct this behavior:
 2. Modify the layer index when saving checkpoint and recover them when loading checkpoint.
 3. The Checkpoint merger do this work, calculate the actual ``offset`` from ``state_dict`` only, a little complex.
 
-Current implementation use solution 2. And solution 1 is also helpful.
+Current implementation use solution 2. While solution 1 is also helpful.
 
 Original Checkpoint Utils
 -------------------------
@@ -113,3 +113,5 @@ We only need ``[model]_loader.py`` in original checkpoint utils now, since we ge
     Because it utilizes sharded load way to minimize the loading checkpoint overhead. 
     Every rank loads its own data from ``state_dict`` which can be accessed by all of them.
     While there is also no need to broadcast among DP ranks, since the saved state_dict is only produced by DP rank 0.
+
+    For users who can only place the huggingface model on one device, we keep the original costly implementation in ``[model]_loader_deprecated``. In this implementation, rank 0 broadcast all weights to each tp and pp rank, and then dp rank 0 broadcast to all dp ranks. There may be at risks of OOM.
