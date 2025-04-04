@@ -27,6 +27,7 @@
 
 from __future__ import annotations
 import os
+import asyncio
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List
 from omegaconf import DictConfig
@@ -41,10 +42,9 @@ from verl.workers.rollout.base import BaseRollout
 from verl.workers.tool.base_tool import BaseTool
 from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length, pad_2d_list_to_length
 from verl.third_party.sglang import parallel_state as sglang_ps
-from sglang.srt.entrypoints.verl_engine import VerlEngine
+from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.sampling.sampling_params import SamplingParams
 
-from .async_generate_monkey_patch import apply_sgl_verl_engine_monkey_patch
 
 if TYPE_CHECKING:
     from torch import nn
@@ -141,6 +141,7 @@ class AsyncSGLangRollout(BaseRollout):
             mesh_dim_names=["dp", "tp", "pp"],
         )
         device_mesh_cpu = init_device_mesh("cpu", **device_mesh_kwargs)
+        self.tp_rank = device_mesh_cpu.get_local_rank()
         # device_mesh_device = init_device_mesh("cuda", **device_mesh_kwargs)
 
         # get tp_rank of this process in this tp group
@@ -149,26 +150,28 @@ class AsyncSGLangRollout(BaseRollout):
                                             device_mesh_cpu.get_group("tp"))
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(visible_devices)
 
-        self.inference_engine = VerlEngine(
-            model_path=actor_module,
-            dtype=config.dtype,
-            mem_fraction_static=config.gpu_memory_utilization,
-            device_mesh_cpu=device_mesh_cpu["tp"],
-            enable_memory_saver=True,
-            base_gpu_id=0,
-            gpu_id_step=1,
-            # NOTE(Chenyang): if you want to debug the sglang engine
-            # please set the following parameters
-            # Otherwise, it will make the engine run too slow
-            # log_level="INFO",
-            # log_requests=True,
-            # log_requests_level=2,
-            # max_running_requests=1,
-        )
-        apply_sgl_verl_engine_monkey_patch(self.inference_engine)
+        if self.tp_rank == 0:
+            self.inference_engine = Engine(
+                model_path=actor_module,
+                dtype=config.dtype,
+                mem_fraction_static=config.gpu_memory_utilization,
+                device_mesh_cpu=device_mesh_cpu["tp"],
+                enable_memory_saver=True,
+                base_gpu_id=0,
+                gpu_id_step=1,
+                # NOTE(Chenyang): if you want to debug the sglang engine
+                # please set the following parameters
+                # Otherwise, it will make the engine run too slow
+                # log_level="INFO",
+                # log_requests=True,
+                # log_requests_level=2,
+                # max_running_requests=1,
+            )
 
-        # offload
-        self.inference_engine.release_memory_occupation()
+            # offload
+            self.inference_engine.release_memory_occupation()
+        else:
+            self.inference_engine = None
 
         kwargs = dict(n=1,
                       max_new_tokens=config.response_length,
@@ -245,12 +248,15 @@ class AsyncSGLangRollout(BaseRollout):
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
             print(f"{self.sampling_params=}")
-            output = self.inference_engine.generate(
-                prompt=None,  # because we have already convert it to prompt token id
-                sampling_params=self.sampling_params,
-                return_logprob=True,
-                input_ids=idx_list,
-            )
+            if self.tp_rank == 0:
+                output = asyncio.run(self.inference_engine.async_generate(
+                    prompt=None,  # because we have already convert it to prompt token id
+                    sampling_params=self.sampling_params,
+                    return_logprob=True,
+                    input_ids=idx_list,
+                ))
+            else:
+                output = None
 
         out = _post_process_outputs(self.tokenizer, output)
 
@@ -294,7 +300,7 @@ class AsyncSGLangRollout(BaseRollout):
         )
 
         # free cache engine
-        if self.config.free_cache_engine and self.inference_engine._engine is not None:
-            self.inference_engine._engine.tokenizer_manager.flush_cache()
+        if self.config.free_cache_engine and self.inference_engine is not None:
+            self.inference_engine.tokenizer_manager.flush_cache()
 
         return DataProto(batch=batch)
