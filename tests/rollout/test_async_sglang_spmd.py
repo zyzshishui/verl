@@ -25,11 +25,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import os
 import torch
 from torch.distributed.device_mesh import init_device_mesh
 
-from sglang.srt.entrypoints.verl_engine import VerlEngine
+from sglang.srt.entrypoints.engine import Engine
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import GenerationConfig
@@ -148,14 +149,19 @@ def test_sglang_spmd():
         if k in os.environ:
             del os.environ[k]
     print('building sglang rollout engine')
-    llm = VerlEngine(model_path=local_model_path,
-                     dtype="bfloat16",
-                     mem_fraction_static=0.5,
-                     device_mesh_cpu=inference_device_mesh_cpu["tp"],
-                     base_gpu_id=0,
-                     gpu_id_step=1)
+    # apply_sgl_verl_engine_async_generate_monkey_patch()
+    tp_rank = inference_device_mesh_cpu.get_local_rank()
+    if tp_rank == 0:
+        llm = Engine(model_path=local_model_path,
+                        dtype="bfloat16",
+                        mem_fraction_static=0.5,
+                        device_mesh_cpu=inference_device_mesh_cpu["tp"],
+                        base_gpu_id=0,
+                        gpu_id_step=1)
+        llm.release_memory_occupation()
+    else:
+        llm = None
 
-    llm.release_memory_occupation()
     print("start generation")
     input_ids = input_ids.cuda()
     attention_mask = attention_mask.cuda()
@@ -163,7 +169,7 @@ def test_sglang_spmd():
 
     generation_config = GenerationConfig(do_sample=False)
     actor_model.cuda()
-    output = actor_model.generate(
+    output = asyncio.run(actor_model.async_generate(
         input_ids=input_ids,
         attention_mask=attention_mask,
         max_new_tokens=max_response_length,
@@ -174,7 +180,7 @@ def test_sglang_spmd():
         # renormalize_logits=True,
         output_scores=False,  # this is potentially very large
         return_dict_in_generate=True,
-        use_cache=False)  # may OOM when use_cache = True
+        use_cache=False))  # may OOM when use_cache = True
     seq = output.sequences
     response = seq[:, max_prompt_length:]
 
@@ -188,7 +194,10 @@ def test_sglang_spmd():
     for i in range(batch_size):
         idx_list.append(_pre_process_inputs(pad_token_id, input_ids[i]))
 
-    outputs = llm.generate(input_ids=idx_list, sampling_params=sampling_params)
+    if tp_rank == 0:
+        outputs = asyncio.run(llm.async_generate(input_ids=idx_list, sampling_params=sampling_params))
+    else:
+        outputs = None
     sglang_response_tokens = []
 
     for output in outputs:
