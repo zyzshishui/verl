@@ -87,9 +87,11 @@ class FSDPSGLangShardingManager(BaseShardingManager):
         # Copy, not share memory
         load_format = None if self.full_params else 'dtensor'
         self.inference_engine.resume_memory_occupation()
+        print(f"rank: {self.device_mesh.get_rank()}, resume memory occupation")
 
         self.inference_engine.update_weights_from_tensor([(k, v) for k, v in params.items()], load_format=None)
         log_gpu_memory_usage('After sync model weights in sharding manager', logger=logger)
+        print(f"rank: {self.device_mesh.get_rank()}, after sync model weights")
 
         del params
         torch.cuda.empty_cache()
@@ -110,7 +112,7 @@ class FSDPSGLangShardingManager(BaseShardingManager):
         log_gpu_memory_usage('Before SGLang offload in sharding manager', logger=logger)
         self.inference_engine.release_memory_occupation()
         log_gpu_memory_usage('After SGLang offload in sharding manager', logger=logger)
-
+        print(f"rank: {self.device_mesh.get_rank()}, after SGLang offload")
         # self.module.to('cuda')
         # if torch.distributed.get_rank() == 0:
         #     print(f'after actor module to cuda in sharding manager memory allocated: {torch.cuda.memory_allocated() / 1e9}GB, reserved: {torch.cuda.memory_reserved() / 1e9}GB')
