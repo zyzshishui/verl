@@ -29,7 +29,7 @@ from __future__ import annotations
 import os
 import asyncio
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, List
+from typing import TYPE_CHECKING, List, Optional
 from omegaconf import DictConfig
 from tensordict import TensorDict
 
@@ -42,7 +42,8 @@ from verl.workers.rollout.base import BaseRollout
 from verl.workers.tool.base_tool import BaseTool
 from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length, pad_2d_list_to_length
 from verl.third_party.sglang import parallel_state as sglang_ps
-from sglang.srt.entrypoints.engine import Engine
+from verl.workers.rollout.sglang_rollout.verl_engine_with_async import VerlEngineWithAsync
+from verl.workers.rollout.data_model import Message, AsyncRolloutRequest, AsyncRolloutRequestStateEnum
 from sglang.srt.sampling.sampling_params import SamplingParams
 
 
@@ -94,7 +95,7 @@ class AsyncSGLangRollout(BaseRollout):
         config: DictConfig,
         tokenizer,
         model_hf_config,
-        tool_list: List[BaseTool],
+        tool_list: Optional[List[BaseTool]] = None,
         **kwargs,
     ):
         """A SGLang rollout. It requires the module is supported by the SGLang.
@@ -108,9 +109,11 @@ class AsyncSGLangRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
-        self._tool_schemas = [tool.get_openai_tool_schema() for tool in tool_list]
-        self._tool_map = {tool.name: tool for tool in tool_list}
-
+        if tool_list is not None:
+            self._tool_schemas = [tool.get_openai_tool_schema() for tool in tool_list]
+            self._tool_map = {tool.name: tool for tool in tool_list}
+        else:
+            self._tool_schemas = []
         assert not (not config.enforce_eager and
                     config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
@@ -141,7 +144,6 @@ class AsyncSGLangRollout(BaseRollout):
             mesh_dim_names=["dp", "tp", "pp"],
         )
         device_mesh_cpu = init_device_mesh("cpu", **device_mesh_kwargs)
-        self.tp_rank = device_mesh_cpu.get_local_rank()
         # device_mesh_device = init_device_mesh("cuda", **device_mesh_kwargs)
 
         # get tp_rank of this process in this tp group
@@ -150,28 +152,25 @@ class AsyncSGLangRollout(BaseRollout):
                                             device_mesh_cpu.get_group("tp"))
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(visible_devices)
 
-        if self.tp_rank == 0:
-            self.inference_engine = Engine(
-                model_path=actor_module,
-                dtype=config.dtype,
-                mem_fraction_static=config.gpu_memory_utilization,
-                device_mesh_cpu=device_mesh_cpu["tp"],
-                enable_memory_saver=True,
-                base_gpu_id=0,
-                gpu_id_step=1,
-                # NOTE(Chenyang): if you want to debug the sglang engine
-                # please set the following parameters
-                # Otherwise, it will make the engine run too slow
-                # log_level="INFO",
-                # log_requests=True,
-                # log_requests_level=2,
-                # max_running_requests=1,
-            )
+        self.inference_engine = VerlEngineWithAsync(
+            model_path=actor_module,
+            dtype=config.dtype,
+            mem_fraction_static=config.gpu_memory_utilization,
+            device_mesh_cpu=device_mesh_cpu["tp"],
+            # enable_memory_saver=True,
+            base_gpu_id=0,
+            gpu_id_step=1,
+            # NOTE(Chenyang): if you want to debug the sglang engine
+            # please set the following parameters
+            # Otherwise, it will make the engine run too slow
+            # log_level="INFO",
+            # log_requests=True,
+            # log_requests_level=2,
+            # max_running_requests=1,
+        )
 
-            # offload
-            self.inference_engine.release_memory_occupation()
-        else:
-            self.inference_engine = None
+        # offload
+        self.inference_engine.release_memory_occupation()
 
         kwargs = dict(n=1,
                       max_new_tokens=config.response_length,
@@ -248,15 +247,12 @@ class AsyncSGLangRollout(BaseRollout):
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
             print(f"{self.sampling_params=}")
-            if self.tp_rank == 0:
-                output = asyncio.run(self.inference_engine.async_generate(
-                    prompt=None,  # because we have already convert it to prompt token id
-                    sampling_params=self.sampling_params,
-                    return_logprob=True,
-                    input_ids=idx_list,
-                ))
-            else:
-                output = None
+            output = asyncio.run(self.inference_engine.async_generate(
+                prompt=None,  # because we have already convert it to prompt token id
+                sampling_params=self.sampling_params,
+                return_logprob=True,
+                input_ids=idx_list,
+            ))
 
         out = _post_process_outputs(self.tokenizer, output)
 
@@ -300,7 +296,18 @@ class AsyncSGLangRollout(BaseRollout):
         )
 
         # free cache engine
-        if self.config.free_cache_engine and self.inference_engine is not None:
-            self.inference_engine.tokenizer_manager.flush_cache()
+        if self.config.free_cache_engine and self.inference_engine._engine is not None:
+            self.inference_engine._engine.tokenizer_manager.flush_cache()
 
         return DataProto(batch=batch)
+    
+    # def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto) -> List[AsyncRolloutRequest]:
+    #     if 'raw_prompt' in prompts.batch:
+    #         messages = [Message(role="user", content=prompts.batch['raw_prompt'])]
+    #     else:
+    #         messages = [Message(role="user", content=prompts.batch['prompts'])]
+    #     return [AsyncRolloutRequest(
+    #         request_id=str(uuid.uuid4()),
+    #         state=AsyncRolloutRequestStateEnum.PENDING,
+    #         prompt=prompts.batch['prompts'],
+    #     )]
