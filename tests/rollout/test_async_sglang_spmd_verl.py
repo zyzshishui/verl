@@ -37,7 +37,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import GenerationConfig
 
 from verl.utils.torch_functional import pad_sequence_to_length
-from verl.workers.rollout.sglang_rollout.verl_engine_with_async import AsyncVerlEngine
+from verl.workers.rollout.sglang_rollout.verl_engine_with_async import VerlEngineWithAsync
 
 
 def levenshtein(s1, s2):
@@ -107,7 +107,7 @@ def test_async_sglang_spmd_verl():
     max_prompt_length = 16
     max_response_length = 16
 
-    Initialize model and token
+    # Initialize model and token
     local_cache_path = '~/.cache/verl/rlhf'
     local_cache_path = os.path.expanduser(local_cache_path)
     hdfs_path = 'Qwen/Qwen2-7B-Instruct'
@@ -151,7 +151,7 @@ def test_async_sglang_spmd_verl():
         if k in os.environ:
             del os.environ[k]
     print('building sglang rollout engine')
-    llm = AsyncVerlEngine(model_path=local_model_path,
+    llm = VerlEngineWithAsync(model_path=local_model_path,
                      dtype="bfloat16",
                      mem_fraction_static=0.5,
                      device_mesh_cpu=inference_device_mesh_cpu["tp"],
