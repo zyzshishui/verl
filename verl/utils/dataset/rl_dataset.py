@@ -90,6 +90,22 @@ class RLHFDataset(Dataset):
                  return_raw_chat=False,
                  truncation='error',
                  filter_overlong_prompts=False):
+        """dataset for rlhf training
+
+        Args:
+            parquet_files (Union[str, List[str]]): parquet files for rlhf training
+            tokenizer (PreTrainedTokenizer): tokenizer for rlhf training
+            processor (Optional[ProcessorMixin], optional): processor for rlhf training. Defaults to None.
+            prompt_key (str, optional): key for prompt in the dataset. Defaults to 'prompt'.
+            image_key (str, optional): key for image in the dataset. Defaults to 'images'.
+            max_prompt_length (int, optional): max length of the prompt. Defaults to 1024.
+            filter_prompts (bool, optional): whether to filter prompts. Defaults to True.
+            cache_dir (str, optional): cache directory for the dataset. Defaults to '~/.cache/verl/rlhf'.
+            chat_template_func (_type_, optional): chat template function. Defaults to None.
+            return_raw_chat (bool, optional): whether to return the raw chat. Defaults to False.
+            truncation (str, optional): truncation strategy. Defaults to 'error'.
+            filter_overlong_prompts (bool, optional): whether to filter overlong prompts. Defaults to False.
+        """
         if not isinstance(parquet_files, (List, ListConfig)):
             parquet_files = [parquet_files]
 

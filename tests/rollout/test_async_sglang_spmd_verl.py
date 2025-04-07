@@ -27,17 +27,17 @@
 
 import asyncio
 import os
+
 import torch
 from torch.distributed.device_mesh import init_device_mesh
 
-from sglang.srt.entrypoints.engine import Engine
+from sglang.srt.entrypoints.verl_engine import VerlEngine
 
 from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import GenerationConfig
 
 from verl.utils.torch_functional import pad_sequence_to_length
 from verl.workers.rollout.sglang_rollout.verl_engine_with_async import AsyncVerlEngine
-from sglang.srt.utils import broadcast_pyobj
 
 
 def levenshtein(s1, s2):
@@ -100,14 +100,14 @@ def initialize_global_process_group(timeout_second=36000):
     return local_rank, rank, world_size
 
 
-def test_sglang_spmd():
+def test_async_sglang_spmd_verl():
     assert torch.cuda.device_count() >= 2, 'At least 2 GPUs is required to run tp+dp tests.'
     initialize_global_process_group()
     # fill rollout config
     max_prompt_length = 16
     max_response_length = 16
 
-    # Initialize model and token
+    Initialize model and token
     local_cache_path = '~/.cache/verl/rlhf'
     local_cache_path = os.path.expanduser(local_cache_path)
     hdfs_path = 'Qwen/Qwen2-7B-Instruct'
@@ -151,18 +151,14 @@ def test_sglang_spmd():
         if k in os.environ:
             del os.environ[k]
     print('building sglang rollout engine')
-    tp_rank = inference_device_mesh_cpu["tp"].get_local_rank()
-    if tp_rank == 0:
-        llm = Engine(
-                model_path=local_model_path,
-                dtype="bfloat16",
-                mem_fraction_static=0.5,
-                enable_memory_saver=True,
-                tp_size=inference_device_mesh_cpu['tp'].size(),
-            )
-    else:
-        llm = None
+    llm = AsyncVerlEngine(model_path=local_model_path,
+                     dtype="bfloat16",
+                     mem_fraction_static=0.5,
+                     device_mesh_cpu=inference_device_mesh_cpu["tp"],
+                     base_gpu_id=0,
+                     gpu_id_step=1)
 
+    # llm.release_memory_occupation()
     print("start generation")
     input_ids = input_ids.cuda()
     attention_mask = attention_mask.cuda()
@@ -195,17 +191,7 @@ def test_sglang_spmd():
     for i in range(batch_size):
         idx_list.append(_pre_process_inputs(pad_token_id, input_ids[i]))
 
-    if tp_rank == 0:
-        outputs = asyncio.run(llm.async_generate(input_ids=idx_list, sampling_params=sampling_params))
-    else:
-        outputs = None
-
-    [outputs] = broadcast_pyobj(
-        data=[outputs],
-        rank=tp_rank,
-        dist_group=inference_device_mesh_cpu["tp"].get_group(),
-        src=0,
-    )
+    outputs = asyncio.run(llm.async_generate(input_ids=idx_list, sampling_params=sampling_params))
     sglang_response_tokens = []
 
     for output in outputs:
