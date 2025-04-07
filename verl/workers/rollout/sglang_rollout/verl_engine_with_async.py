@@ -24,7 +24,7 @@ from sglang.srt.server import Engine
 from sglang.srt.utils import MultiprocessingSerializer, broadcast_pyobj
 
 
-class AsyncVerlEngine:
+class VerlEngineWithAsync:
     def __init__(
         self,
         device_mesh_cpu: DeviceMesh,

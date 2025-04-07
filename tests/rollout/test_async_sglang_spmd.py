@@ -36,7 +36,6 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import GenerationConfig
 
 from verl.utils.torch_functional import pad_sequence_to_length
-from verl.workers.rollout.sglang_rollout.verl_engine_with_async import AsyncVerlEngine
 from sglang.srt.utils import broadcast_pyobj
 
 
