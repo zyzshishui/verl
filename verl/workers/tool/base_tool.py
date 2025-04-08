@@ -20,16 +20,16 @@ class BaseTool(object):
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    def create(self) -> None:
+    def create(self) -> str:
         pass
     
-    def execute(self, parameters: OpenAIFunctionParsedSchema) -> None:
+    def execute(self, instance_id: str, parameters: OpenAIFunctionParsedSchema) -> None:
         pass
     
-    def calc_reward(self) -> float:
+    def calc_reward(self, instance_id: str) -> float:
         return 0.0
     
-    def release(self) -> None:
+    def release(self, instance_id: str) -> None:
         pass
     
     
