@@ -157,7 +157,7 @@ class AsyncSGLangRollout(BaseRollout):
             dtype=config.dtype,
             mem_fraction_static=config.gpu_memory_utilization,
             device_mesh_cpu=device_mesh_cpu["tp"],
-            # enable_memory_saver=True,
+            enable_memory_saver=True,
             base_gpu_id=0,
             gpu_id_step=1,
             # NOTE(Chenyang): if you want to debug the sglang engine
@@ -247,7 +247,8 @@ class AsyncSGLangRollout(BaseRollout):
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
             print(f"{self.sampling_params=}")
-            output = asyncio.run(self.inference_engine.async_generate(
+            loop = asyncio.get_event_loop()
+            output = loop.run_until_complete(self.inference_engine.async_generate(
                 prompt=None,  # because we have already convert it to prompt token id
                 sampling_params=self.sampling_params,
                 return_logprob=True,
