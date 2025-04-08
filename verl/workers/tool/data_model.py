@@ -31,4 +31,4 @@ class OpenAIFunctionToolSchema(BaseModel):
 class OpenAIFunctionParsedSchema(BaseModel):
     """The parsed schema of a tool in OpenAI format."""
     name: str
-    arguments: str
+    arguments: dict[str, str]
