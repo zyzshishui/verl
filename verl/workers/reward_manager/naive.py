@@ -40,7 +40,7 @@ class NaiveRewardManager:
 
         if 'rm_scores' in data.batch.keys():
             if return_dict:
-                return {"reward": data.batch['rm_scores']}
+                return {"reward_tensor": data.batch['rm_scores']}
             else:
                 return data.batch['rm_scores']
 
