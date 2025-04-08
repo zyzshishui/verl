@@ -109,12 +109,11 @@ def test_async_sglang_spmd_verl_fsdp():
     max_response_length = 16
 
     # Initialize model and token
-    # local_cache_path = '~/.cache/verl/rlhf'
-    # local_cache_path = os.path.expanduser(local_cache_path)
-    # hdfs_path = 'Qwen/Qwen2-7B-Instruct'
-    # from verl.utils.fs import copy_to_local
-    # local_model_path = copy_to_local(src=hdfs_path, cache_dir=local_cache_path)
-    local_model_path = '/user/longxiang1/models/Qwen/Qwen2.5-0.5B'
+    local_cache_path = '~/.cache/verl/rlhf'
+    local_cache_path = os.path.expanduser(local_cache_path)
+    hdfs_path = 'Qwen/Qwen2-7B-Instruct'
+    from verl.utils.fs import copy_to_local
+    local_model_path = copy_to_local(src=hdfs_path, cache_dir=local_cache_path)
     tokenizer = AutoTokenizer.from_pretrained(local_model_path, padding_side='left')
 
     preencode_prompts = [
@@ -144,7 +143,7 @@ def test_async_sglang_spmd_verl_fsdp():
                            spaces_between_special_tokens=True,
                            ignore_eos=False)
 
-    tensor_parallel_size = 2
+    tensor_parallel_size = 4
     device_mesh_kwargs = dict(mesh_shape=(1, tensor_parallel_size, 1), mesh_dim_names=["dp", "tp", "pp"])
     inference_device_mesh_cpu = init_device_mesh("cpu", **device_mesh_kwargs)
 

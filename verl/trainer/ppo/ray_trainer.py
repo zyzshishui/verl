@@ -513,16 +513,15 @@ class RayPPOTrainer(object):
             input_texts = [self.tokenizer.decode(ids, skip_special_tokens=True) for ids in input_ids]
             sample_inputs.extend(input_texts)
 
+            non_tensor_batch_keys = ['raw_prompt_ids']
             if 'multi_modal_inputs' in test_batch.non_tensor_batch.keys():
-                test_gen_batch = test_batch.pop(
-                    batch_keys=['input_ids', 'attention_mask', 'position_ids'],
-                    non_tensor_batch_keys=['raw_prompt_ids', 'multi_modal_data', 'multi_modal_inputs'],
-                )
-            else:
-                test_gen_batch = test_batch.pop(
-                    batch_keys=['input_ids', 'attention_mask', 'position_ids'],
-                    non_tensor_batch_keys=['raw_prompt_ids'],
-                )
+                non_tensor_batch_keys.extend(['multi_modal_data', 'multi_modal_inputs'])
+            if 'raw_prompt' in test_batch.non_tensor_batch.keys():
+                non_tensor_batch_keys.append('raw_prompt')
+            test_gen_batch = test_batch.pop(
+                batch_keys=['input_ids', 'attention_mask', 'position_ids'],
+                non_tensor_batch_keys=non_tensor_batch_keys,
+            )
 
             test_gen_batch.meta_info = {
                 'eos_token_id': self.tokenizer.eos_token_id,
@@ -799,28 +798,28 @@ class RayPPOTrainer(object):
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-
+                # print(f"batch_dict: {batch_dict}")
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
+                # print(f"DataProto.from_single_dict(batch_dict): {batch}")
 
                 # pop those keys for generation
+                non_tensor_batch_keys = ['raw_prompt_ids']
                 if 'multi_modal_inputs' in batch.non_tensor_batch.keys():
-                    gen_batch = batch.pop(
-                        batch_keys=['input_ids', 'attention_mask', 'position_ids'],
-                        non_tensor_batch_keys=['raw_prompt_ids', 'multi_modal_data', 'multi_modal_inputs'],
-                    )
-                else:
-                    gen_batch = batch.pop(
-                        batch_keys=['input_ids', 'attention_mask', 'position_ids'],
-                        non_tensor_batch_keys=['raw_prompt_ids'],
-                    )
-
+                    non_tensor_batch_keys.extend(['multi_modal_data', 'multi_modal_inputs'])
+                if 'raw_prompt' in batch.non_tensor_batch.keys():
+                    non_tensor_batch_keys.append('raw_prompt')
+                gen_batch = batch.pop(
+                    batch_keys=['input_ids', 'attention_mask', 'position_ids'],
+                    non_tensor_batch_keys=non_tensor_batch_keys,
+                )
+                # print(f"gen_batch pop from batch: {gen_batch}")
                 is_last_step = self.global_steps >= self.total_training_steps
 
                 with _timer('step', timing_raw):
                     # generate a batch
                     with _timer('gen', timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-
+                    print(f"gen_batch_output: {gen_batch_output}")
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer('gen_max', timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)

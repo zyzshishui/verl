@@ -206,6 +206,9 @@ class AsyncSGLangRollout(BaseRollout):
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
         # if self.config.free_cache_engine:
+        print(f"prompts.batch.keys: {prompts.batch.keys()}")
+        print(f"prompts.non_tensor_batch.keys: {prompts.non_tensor_batch.keys()}")
+        print(f"prompts.meta_info: {prompts.meta_info}")
 
         idx = prompts.batch["input_ids"]  # (bs, prompt_length)
         # left-padded attention_mask
@@ -302,13 +305,16 @@ class AsyncSGLangRollout(BaseRollout):
 
         return DataProto(batch=batch)
     
-    # def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto) -> List[AsyncRolloutRequest]:
-    #     if 'raw_prompt' in prompts.batch:
-    #         messages = [Message(role="user", content=prompts.batch['raw_prompt'])]
-    #     else:
-    #         messages = [Message(role="user", content=prompts.batch['prompts'])]
-    #     return [AsyncRolloutRequest(
-    #         request_id=str(uuid.uuid4()),
-    #         state=AsyncRolloutRequestStateEnum.PENDING,
-    #         prompt=prompts.batch['prompts'],
-    #     )]
+    def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto) -> List[AsyncRolloutRequest]:
+        assert 'raw_prompt' in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
+        return []
+        # else:
+        #     input_ids = prompts.batch['input_ids']
+        #     prompt_str_list = [self.tokenizer.decode(input_ids[i]) for i in range(input_ids.size(0))]
+        #     messages = [tokenizer. for prompt_str in prompt_str_list]
+        #     messages = [Message(role="user", content=prompts.batch['prompts'])]
+        # return [AsyncRolloutRequest(
+        #     request_id=str(uuid.uuid4()),
+        #     state=AsyncRolloutRequestStateEnum.PENDING,
+        #     prompt=prompts.batch['prompts'],
+        # )]
