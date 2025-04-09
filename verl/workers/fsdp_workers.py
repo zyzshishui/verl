@@ -38,6 +38,7 @@ from verl.utils.import_utils import import_external_libs
 from verl.utils.model import compute_position_id_with_mask
 from verl.utils.flops_counter import FlopsCounter
 from verl.utils.checkpoint.fsdp_checkpoint_manager import FSDPCheckpointManager
+from verl.workers.agentic.fsdp_sgl import FSDPSGLShardingManager
 from verl.workers.sharding_manager.fsdp_ulysses import FSDPUlyssesShardingManager
 
 from codetiming import Timer
@@ -78,7 +79,8 @@ class ActorRolloutRefWorker(Worker):
         self.config = config
         import torch.distributed
         if not torch.distributed.is_initialized():
-            torch.distributed.init_process_group()
+            from datetime import timedelta
+            torch.distributed.init_process_group(backend="nccl", timeout=timedelta(minutes=60))
 
         # build device mesh for FSDP
         world_size = torch.distributed.get_world_size()
@@ -232,7 +234,7 @@ class ActorRolloutRefWorker(Worker):
         else:
             param_dtype = torch.bfloat16
             reduce_dtype = torch.float32
-            buffer_dtype = torch.float32
+            buffer_dtype = torch.bfloat16
 
         mixed_precision = MixedPrecision(param_dtype=param_dtype, reduce_dtype=reduce_dtype, buffer_dtype=buffer_dtype)
 
@@ -368,6 +370,24 @@ class ActorRolloutRefWorker(Worker):
                                                                  device_mesh=rollout_device_mesh)
             log_gpu_memory_usage('After building sharding manager', logger=None)
 
+        elif self.config.rollout.name == "async":
+            from verl.workers.agentic.async_rollout import AsyncRollout
+            from verl.workers.agentic.fsdp_sgl import FSDPSGLShardingManager
+            local_path = copy_to_local(self.config.model.path)
+            # print(f"nodedup creating async rollout instance, {torch.distributed.get_rank()=} {rollout_device_mesh.get_rank()=} {rollout_device_mesh.shape=}")
+            rollout = AsyncRollout(model_path=local_path, config=self.config.rollout, device_mesh=rollout_device_mesh)
+            rollout_sharding_manager = FSDPSGLShardingManager(
+                module=self.actor_module_fsdp,
+                inference_engine=rollout.engine,
+                model_config=self.actor_model_config,
+                full_params='hf' in self.config.rollout.load_format,
+                device_mesh=rollout_device_mesh,
+                role=self.role,
+                rollout_count=self.config.get("rollout_count"),
+                exchange_size=self.config.get("exchange_size"),
+            )
+        else:
+            raise NotImplementedError(f"Rollout name: {self.config.rollout.name} is not supported")
         return rollout, rollout_sharding_manager
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
@@ -416,8 +436,24 @@ class ActorRolloutRefWorker(Worker):
                                               actor_optimizer=self.actor_optimizer)
 
         if self._is_rollout:
+            if not self._is_actor:
+                self.actor_module_fsdp = None
+                self.actor_optimizer = None
+                self.actor_lr_scheduler = None
+                self.actor_model_config = None
             self.rollout, self.rollout_sharding_manager = self._build_rollout(
                 trust_remote_code=self.config.model.get('trust_remote_code', False))
+        elif self._is_actor:
+            self.rollout_sharding_manager = FSDPSGLShardingManager(
+                module=self.actor_module_fsdp,
+                inference_engine=None,
+                model_config=self.actor_model_config,
+                full_params='hf' in self.config.rollout.load_format,
+                device_mesh=self.device_mesh,
+                role=self.role,
+                rollout_count=self.config.get("rollout_count"),
+                exchange_size=self.config.get("exchange_size"),
+            )
 
         if self._is_ref:
             self.ref_module_fsdp = self._build_model_optimizer(model_path=self.config.model.path,
@@ -442,6 +478,7 @@ class ActorRolloutRefWorker(Worker):
                 lr_scheduler=self.actor_lr_scheduler,
                 processing_class=self.processor if self.processor is not None else self.tokenizer,
                 checkpoint_contents=self.config.actor.checkpoint.contents)
+        torch.cuda.empty_cache()
 
     @register(dispatch_mode=Dispatch.DP_COMPUTE_PROTO)
     def update_actor(self, data: DataProto):
@@ -493,6 +530,11 @@ class ActorRolloutRefWorker(Worker):
     def generate_sequences(self, prompts: DataProto):
         # Support all hardwares
         prompts = prompts.to(torch.cuda.current_device())
+
+        if self._is_actor and not self._is_rollout:
+            with self.rollout_sharding_manager:
+                pass
+            return
 
         assert self._is_rollout
         if self._is_offload_param:
