@@ -114,3 +114,12 @@ tests/e2e/toy_examples/deepspeed/synchronous/output.txt
 
 # ckpt
 *.lock
+
+logs/
+
+# data
+*.parquet
+batches/
+configs/
+
+scripts/rl_broswer
