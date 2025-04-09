@@ -1,5 +1,6 @@
-from .data_model import OpenAIFunctionToolSchema, OpenAIFunctionParametersSchema, OpenAIFunctionParsedSchema
-
+from typing import Optional
+from uuid import uuid4
+from .data_model import OpenAIFunctionToolSchema
 
 class BaseTool(object):
     """Base class for tools.
@@ -20,11 +21,14 @@ class BaseTool(object):
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    def create(self) -> str:
-        pass
+    def create(self, instance_id: Optional[str] = None) -> str:
+        if instance_id is None:
+            return str(uuid4())
+        else:
+            return instance_id
     
-    def execute(self, instance_id: str, parameters: OpenAIFunctionParsedSchema) -> None:
-        pass
+    def execute(self, instance_id: str, parameters: str) -> str:
+        return "Updated the tool state."
     
     def calc_reward(self, instance_id: str) -> float:
         return 0.0
