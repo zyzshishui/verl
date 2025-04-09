@@ -1,3 +1,5 @@
+import json
+from typing import Optional
 from uuid import uuid4
 from .base_tool import BaseTool
 from .data_model import OpenAIFunctionToolSchema, OpenAIFunctionParametersSchema, OpenAIFunctionParsedSchema
@@ -41,8 +43,9 @@ class Gsm8kTool(BaseTool):
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    def create(self) -> str:
-        instance_id = str(uuid4())
+    def create(self, instance_id: Optional[str] = None) -> str:
+        if instance_id is None:
+            instance_id = str(uuid4())
         self._instance_dict[instance_id] = {
             "response": "",
             "ground_truth": "",
@@ -50,9 +53,11 @@ class Gsm8kTool(BaseTool):
         }
         return instance_id
     
-    def execute(self, instance_id: str, parameters: OpenAIFunctionParsedSchema) -> None:
-        self._instance_dict[instance_id]["response"] = parameters.arguments["response"]
-        self._instance_dict[instance_id]["ground_truth"] = parameters.arguments["ground_truth"]
+    def execute(self, instance_id: str, parameters: str) -> str:
+        parameters = json.loads(parameters)
+        self._instance_dict[instance_id]["response"] = parameters.get("response", "")
+        self._instance_dict[instance_id]["ground_truth"] = parameters.get("ground_truth", "")
+        return "Updated the response and ground truth in the query."
     
     def calc_reward(self, instance_id: str) -> float:
         return gsm8k.compute_score(self._instance_dict[instance_id]["response"], self._instance_dict[instance_id]["ground_truth"])

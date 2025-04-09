@@ -28,6 +28,7 @@
 from __future__ import annotations
 import os
 import asyncio
+from uuid import uuid4
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional
 from omegaconf import DictConfig
@@ -36,15 +37,20 @@ from tensordict import TensorDict
 import torch.distributed
 from torch.nn.utils.rnn import pad_sequence
 from torch.distributed.device_mesh import init_device_mesh
+from transformers import PreTrainedTokenizer
 
 from verl import DataProto
 from verl.workers.rollout.base import BaseRollout
 from verl.workers.tool.base_tool import BaseTool
 from verl.utils.torch_functional import get_eos_mask, pad_sequence_to_length, pad_2d_list_to_length
+from verl.utils.model import compute_position_id_with_mask
 from verl.third_party.sglang import parallel_state as sglang_ps
 from verl.workers.rollout.sglang_rollout.verl_engine_with_async import VerlEngineWithAsync
-from verl.workers.rollout.data_model import Message, AsyncRolloutRequest, AsyncRolloutRequestStateEnum
+from verl.workers.rollout.data_model import Message, AsyncRolloutRequest, AsyncRolloutRequestStateEnum, FinishReasonTypeEnum
+from verl.workers.tool.data_model import OpenAIFunctionParsedSchema, OpenAIFunctionToolCall
 from sglang.srt.sampling.sampling_params import SamplingParams
+from sglang.srt.openai_api.protocol import Tool
+from sglang.srt.function_call_parser import FunctionCallParser
 
 
 if TYPE_CHECKING:
@@ -87,6 +93,15 @@ def _post_process_outputs(tokenizer, output):
     return batched_output_token_ids, batched_logprobs
 
 
+def get_tool_call_parser_type(tokenizer: PreTrainedTokenizer) -> str:
+    for parser_type, parser_cls in FunctionCallParser.ToolCallParserEnum.items():
+        parser = parser_cls()
+        if parser.bot_token in tokenizer.special_tokens_map:
+            return parser_type
+    else:
+        raise ValueError(f"No tool call parser found for tokenizer {tokenizer}")
+
+
 class AsyncSGLangRollout(BaseRollout):
 
     def __init__(
@@ -112,8 +127,18 @@ class AsyncSGLangRollout(BaseRollout):
         if tool_list is not None:
             self._tool_schemas = [tool.get_openai_tool_schema() for tool in tool_list]
             self._tool_map = {tool.name: tool for tool in tool_list}
+            self._tool_call_parser_type = get_tool_call_parser_type(tokenizer)
+            self._sgl_tools = [Tool.model_validate(tool) for tool in self._tool_schemas]
+            self._function_call_parser = FunctionCallParser(
+                    self._sgl_tools, 
+                    self._tool_call_parser_type,
+                )
         else:
             self._tool_schemas = []
+            self._tool_map = {}
+            self._tool_call_parser_type = None
+            self._sgl_tools = []
+            self._function_call_parser = None
         assert not (not config.enforce_eager and
                     config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
@@ -305,16 +330,88 @@ class AsyncSGLangRollout(BaseRollout):
 
         return DataProto(batch=batch)
     
-    def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto) -> List[AsyncRolloutRequest]:
+    async def _async_rollout_a_request(self, req: AsyncRolloutRequest) -> AsyncRolloutRequest:
+        finish_reason_type = None
+        while True:
+            if req.state == AsyncRolloutRequestStateEnum.PENDING:
+                for tool in self._tool_map.values():
+                    tool.create(req.request_id)
+                req.state = AsyncRolloutRequestStateEnum.RUNNING
+                generation_prompt = req.get_generation_prompt(self.tokenizer)
+                output = await self.inference_engine.async_generate(
+                    prompt=generation_prompt,
+                    sampling_params=self.sampling_params,
+                    return_logprob=False,
+                )
+                content = output["text"]
+                finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
+                if self._function_call_parser and self._function_call_parser.has_tool_call(content):
+                    finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
+                    content, tool_calls = self._function_call_parser.parse_non_stream(content)
+                    parsed_tool_calls = [
+                        OpenAIFunctionToolCall(
+                            id=str(tool_call.tool_index), 
+                            function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
+                        ) for tool_call in tool_calls
+                    ]
+                    tool_call_results = []
+                    for tool_call in parsed_tool_calls:
+                        tool = self._tool_map[tool_call.function.name]
+                        resp = tool.execute(req.request_id, tool_call.function.arguments)
+                        tool_call_results.append((tool_call, resp))
+                req.add_assistant_message(self.tokenizer, content)
+            elif req.state == AsyncRolloutRequestStateEnum.RUNNING:
+                if finish_reason_type == "stop":
+                    req.state = AsyncRolloutRequestStateEnum.COMPLETED
+                    req.messages.append(Message(role="assistant", content=content))
+                else:
+                    req.state = AsyncRolloutRequestStateEnum.FAILED
+        return req
+    
+    async def _async_rollout_a_batch(self, req_list: List[AsyncRolloutRequest]) -> List[AsyncRolloutRequest]:
+        output_req_list =  await asyncio.gather(*[self._async_rollout_a_request(req) for req in req_list])
+        return output_req_list
+    
+    @torch.no_grad()
+    def generate_sequences_with_tools(self, prompts: DataProto, **kwargs) -> DataProto:
+        req_list = self._preprocess_prompt_to_async_rollout_requests(prompts, self.config.n)
+        loop = asyncio.get_event_loop()
+        output_req_list = loop.run_until_complete(self._async_rollout_a_batch(req_list))
+        return prompts
+    
+    def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> List[AsyncRolloutRequest]:
         assert 'raw_prompt' in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
-        return []
-        # else:
-        #     input_ids = prompts.batch['input_ids']
-        #     prompt_str_list = [self.tokenizer.decode(input_ids[i]) for i in range(input_ids.size(0))]
-        #     messages = [tokenizer. for prompt_str in prompt_str_list]
-        #     messages = [Message(role="user", content=prompts.batch['prompts'])]
-        # return [AsyncRolloutRequest(
-        #     request_id=str(uuid.uuid4()),
-        #     state=AsyncRolloutRequestStateEnum.PENDING,
-        #     prompt=prompts.batch['prompts'],
-        # )]
+        req_list = []
+        for data_idx, raw_prompt in enumerate(prompts.non_tensor_batch['raw_prompt']):
+            for rollout_offset in range(n):
+                if self._tool_schemas:
+                    prompt_with_chat_template = self.tokenizer.apply_chat_template(
+                        conversation=raw_prompt,
+                        tools=self._tool_schemas,
+                        add_generation_prompt=True,
+                        tokenize=False,
+                        return_tensors="pt",
+                    )
+                    input_data = self.tokenizer(prompt_with_chat_template, return_tensors="pt", add_special_tokens=False)
+                    _input_ids = input_data['input_ids'][0].tolist()
+                    _attention_mask = input_data['attention_mask'][0].tolist()
+                    _position_ids = compute_position_id_with_mask(_attention_mask).tolist()
+                else:
+                    _input_ids = _pre_process_inputs(self.pad_token_id, prompts.batch['input_ids'][data_idx])
+                    _attention_mask = _pre_process_inputs(self.pad_token_id, prompts.batch['attention_mask'][data_idx])
+                    _position_ids = _pre_process_inputs(self.pad_token_id, prompts.batch["position_ids"][data_idx])
+                
+                req_list.append(AsyncRolloutRequest(
+                    batch_data_id=data_idx,
+                    rollout_offset=rollout_offset,
+                    request_id=str(uuid4()),
+                    state=AsyncRolloutRequestStateEnum.PENDING,
+                    messages=[Message.model_validate(msg) for msg in raw_prompt],
+                    tools=self._tool_schemas,
+                    input_ids=_input_ids,
+                    attention_mask=_attention_mask,
+                    position_ids=_position_ids,
+                    loss_mask=[0] * len(_input_ids),
+                ))
+
+        return req_list

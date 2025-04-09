@@ -1,3 +1,4 @@
+from typing import Literal
 from pydantic import BaseModel
 
 
@@ -20,6 +21,7 @@ class OpenAIFunctionSchema(BaseModel):
     name: str
     description: str
     parameters: OpenAIFunctionParametersSchema
+    strict: bool = False
 
 
 class OpenAIFunctionToolSchema(BaseModel):
@@ -31,4 +33,11 @@ class OpenAIFunctionToolSchema(BaseModel):
 class OpenAIFunctionParsedSchema(BaseModel):
     """The parsed schema of a tool in OpenAI format."""
     name: str
-    arguments: dict[str, str]
+    arguments: str  # JSON string
+
+
+class OpenAIFunctionToolCall(BaseModel):
+    """The tool call in OpenAI format."""
+    id: str
+    type: Literal["function"] = "function"
+    function: OpenAIFunctionParsedSchema
