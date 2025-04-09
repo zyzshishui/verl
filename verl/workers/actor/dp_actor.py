@@ -57,7 +57,7 @@ class DataParallelPPOActor(BasePPOActor):
 
     def _forward_micro_batch(self, micro_batch, temperature) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        Returns: 
+        Returns:
             entropy: # (bs, response_len)
             log_probs: # (bs, response_len)
         """
@@ -77,6 +77,7 @@ class DataParallelPPOActor(BasePPOActor):
                 position_ids = position_ids.transpose(0, 1)  # (bsz, 3, seqlen) -> (3, bsz, seqlen)
 
             if self.use_remove_padding:
+                print(f"using remove padding, before {input_ids.shape=} {attention_mask.sum(dim=-1)=}")
                 input_ids_rmpad, indices, *_ = unpad_input(input_ids.unsqueeze(-1),
                                                            attention_mask)  # input_ids_rmpad (total_nnz, ...)
                 input_ids_rmpad = input_ids_rmpad.transpose(0, 1)  # (1, total_nnz)
@@ -104,6 +105,7 @@ class DataParallelPPOActor(BasePPOActor):
                 input_ids_rmpad_rolled = input_ids_rmpad_rolled.squeeze(0)  # ((total_nnz / sp) + pad)
 
                 # only pass input_ids and position_ids to enable flash_attn_varlen
+                print(f"rmpad before forward {input_ids_rmpad.shape=} {position_ids_rmpad.shape=}")
                 output = self.actor_module(input_ids=input_ids_rmpad,
                                            attention_mask=None,
                                            position_ids=position_ids_rmpad,
@@ -194,6 +196,7 @@ class DataParallelPPOActor(BasePPOActor):
         batch = data.select(batch_keys=select_keys).batch
         has_multi_modal_inputs = 'multi_modal_inputs' in data.non_tensor_batch.keys()
 
+        print(f"inside dp actor, {use_dynamic_bsz=}")
         if has_multi_modal_inputs:
             num_micro_batches = data.batch.batch_size[0] // micro_batch_size
             non_tensor_select_keys = ['multi_modal_inputs']
@@ -229,7 +232,8 @@ class DataParallelPPOActor(BasePPOActor):
 
         temperature = data.meta_info['temperature']  # temperature must be in the data.meta_info to avoid slient error
 
-        select_keys = ['responses', 'input_ids', 'attention_mask', 'position_ids', 'old_log_probs', 'advantages']
+        # select_keys = ['responses', 'input_ids', 'attention_mask', 'position_ids', 'old_log_probs', 'advantages']
+        select_keys = ['responses', 'input_ids', 'attention_mask', 'loss_mask', 'position_ids', 'old_log_probs', 'advantages']
         if self.config.use_kl_loss:
             select_keys.append('ref_log_prob')
         batch = data.select(batch_keys=select_keys).batch
@@ -268,11 +272,18 @@ class DataParallelPPOActor(BasePPOActor):
                         data = {**data.batch.cuda(), **data.non_tensor_batch}
                     else:
                         data = data.cuda()  # actor device is cpu when using offload
-
                     responses = data['responses']
                     response_length = responses.size(1)
                     attention_mask = data['attention_mask']
-                    response_mask = attention_mask[:, -response_length:]
+
+                    # assert self.config.get('multi_turn') == True
+                    if self.config.get('multi_turn', False):
+                        # loss mask like 1,1,1,0,0,1,1,0,0,0,1,1,1,0,...
+                        loss_mask = data['loss_mask']
+                        response_mask = loss_mask[:, -response_length:]
+                    else:
+                        # only align single-turn
+                        response_mask = attention_mask[:, -response_length:]
                     old_log_prob = data['old_log_probs']
                     advantages = data['advantages']
 
@@ -281,6 +292,8 @@ class DataParallelPPOActor(BasePPOActor):
 
                     # all return: (bsz, response_length)
                     entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature)
+
+                    print(f"inside dp actor {loss_mask.shape=} {response_mask.shape=} {response_length=} {responses.shape=} {old_log_prob.shape=} {log_prob.shape=}")
 
                     pg_loss, pg_clipfrac, ppo_kl = core_algos.compute_policy_loss(old_log_prob=old_log_prob,
                                                                                   log_prob=log_prob,
@@ -299,6 +312,8 @@ class DataParallelPPOActor(BasePPOActor):
                         kld = core_algos.kl_penalty(logprob=log_prob,
                                                     ref_logprob=ref_log_prob,
                                                     kl_penalty=self.config.kl_loss_type)
+                        print("kld.shape", kld.shape)
+                        print("response_mask.shape", response_mask.shape)
                         kl_loss = masked_mean(kld, response_mask)
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
@@ -310,6 +325,10 @@ class DataParallelPPOActor(BasePPOActor):
                         loss = policy_loss * (len(data) / self.config.ppo_mini_batch_size)
                     else:
                         loss = policy_loss / self.gradient_accumulation
+
+                    # lurui: check whether the loss is valid, if -inf, somewhere must be wrong
+                    print("loss: ", loss)
+
                     loss.backward()
 
                     data = {

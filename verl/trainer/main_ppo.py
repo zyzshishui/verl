@@ -14,6 +14,8 @@
 """
 Note that we don't combine the main with ray_trainer as ray_trainer is used by other main.
 """
+import os
+
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 
 import ray
@@ -28,12 +30,12 @@ def main(config):
 def run_ppo(config, compute_score=None):
     if not ray.is_initialized():
         # this is for local ray cluster
-        ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}})
+        # ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}})
+        ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN', 'VLLM_ATTENTION_BACKEND': 'XFORMERS', **dict(os.environ)}})
 
-    ray.get(main_task.remote(config, compute_score))
+    main_task(config, compute_score)
 
 
-@ray.remote(num_cpus=1)  # please make sure main_task is not scheduled on head
 def main_task(config, compute_score=None):
     from verl.utils.fs import copy_to_local
     # print initial config
@@ -47,7 +49,7 @@ def main_task(config, compute_score=None):
 
     # instantiate tokenizer
     from verl.utils import hf_tokenizer, hf_processor
-    tokenizer = hf_tokenizer(local_path)
+    tokenizer = hf_tokenizer(local_path, trust_remote_code=True)
     processor = hf_processor(local_path, use_fast=True)  # used for multimodal LLM, could be none
 
     # define worker classes
@@ -68,21 +70,46 @@ def main_task(config, compute_score=None):
 
     from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
-    role_worker_mapping = {
-        Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-        Role.Critic: ray.remote(CriticWorker),
-        Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
-    }
+    if config.trainer.get("hybrid_engine", True):
+        role_worker_mapping = {
+            Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
+            Role.Critic: ray.remote(CriticWorker),
+            Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
+        }
 
-    global_pool_id = 'global_pool'
-    resource_pool_spec = {
-        global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
-    }
-    mapping = {
-        Role.ActorRollout: global_pool_id,
-        Role.Critic: global_pool_id,
-        Role.RefPolicy: global_pool_id,
-    }
+        global_pool_id = 'global_pool'
+        print(f'config.trainer.nnodes: {config.trainer.nnodes}')
+        print(f'config.trainer.n_gpus_per_node: {config.trainer.n_gpus_per_node}')
+        resource_pool_spec = {
+            global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+        }
+        mapping = {
+            Role.ActorRollout: global_pool_id,
+            Role.Critic: global_pool_id,
+            Role.RefPolicy: global_pool_id,
+        }
+    else:
+        role_worker_mapping = {
+            Role.Actor: ray.remote(ActorRolloutRefWorker),
+            Role.Critic: ray.remote(CriticWorker),
+            Role.RefPolicy: ray.remote(ActorRolloutRefWorker),
+            Role.Rollout: ray.remote(ActorRolloutRefWorker),
+        }
+
+        placement = config.trainer.placement
+        resource_pool_spec = {
+            "actor_pool": [placement["actor"]] * config.trainer.nnodes,
+            "ref_pool": [placement["ref"]] * config.trainer.nnodes,
+            "critic_pool": [placement.get("critic", 0)] * config.trainer.nnodes,
+            "rollout_pool": [placement["rollout"]] * config.trainer.nnodes,
+        }
+        print(f"resource_pool_spec: {resource_pool_spec}")
+        mapping = {
+            Role.Actor: "actor_pool",
+            Role.Critic: "critic_pool",
+            Role.RefPolicy: "ref_pool",
+            Role.Rollout: "rollout_pool",
+        }
 
     # we should adopt a multi-source reward function here
     # - for rule-based rm, we directly call a reward score
@@ -107,6 +134,9 @@ def main_task(config, compute_score=None):
     elif reward_manager_name == 'prime':
         from verl.workers.reward_manager import PrimeRewardManager
         reward_manager_cls = PrimeRewardManager
+    elif reward_manager_name == "swedev":
+        from verl.workers.reward_manager import SWEDevRewardManager
+        reward_manager_cls = SWEDevRewardManager
     else:
         raise NotImplementedError
     reward_fn = reward_manager_cls(tokenizer=tokenizer, num_examine=0, compute_score=compute_score)

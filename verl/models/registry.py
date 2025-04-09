@@ -21,6 +21,8 @@ import torch.nn as nn
 # TODO(sgm): HF may supported more than listed here, we should add more after testing
 _MODELS_SUPPORT_RMPAD = {'llama', 'mistral', 'gemma', 'qwen2', 'qwen2_vl', 'qwen2_5_vl'}
 
+# by lurui: try a dummy Chatglm configuration, but it failed, so use_remove_padding=False is needed for glm
+# _REOVEPAD_MODELS['chatglm'] = LlamaConfig
 
 def check_model_support_rmpad(model_type: str):
     assert isinstance(model_type, str)
