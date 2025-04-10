@@ -28,6 +28,8 @@
 from __future__ import annotations
 import os
 import asyncio
+import logging
+from json import JSONDecodeError
 from uuid import uuid4
 from contextlib import contextmanager
 from copy import deepcopy
@@ -52,6 +54,10 @@ from verl.workers.tool.data_model import OpenAIFunctionParsedSchema, OpenAIFunct
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.openai_api.protocol import Tool
 from sglang.srt.function_call_parser import FunctionCallParser
+
+
+logger = logging.getLogger(__file__)
+logger.setLevel(os.getenv('VERL_PPO_LOGGING_LEVEL', 'WARN'))
 
 
 if TYPE_CHECKING:
@@ -381,14 +387,19 @@ class AsyncSGLangRollout(BaseRollout):
                 if self._function_call_parser and self._function_call_parser.has_tool_call(content):
                     finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
                     _req.state = AsyncRolloutRequestStateEnum.TOOL_CALLING
-                    content, tool_calls = self._function_call_parser.parse_non_stream(content)
+                    try:
+                        normed_content, tool_calls = self._function_call_parser.parse_non_stream(content)
+                    except JSONDecodeError as e:
+                        logger.warning(f"Failed to parse tool calls from content: {content}")
+                        normed_content = content
+                        tool_calls = []
                     parsed_tool_calls = [
                         OpenAIFunctionToolCall(
                             id=str(tool_call.tool_index), 
                             function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
                         ) for tool_call in tool_calls
                     ]
-                    _req.add_assistant_message(self.tokenizer, content, tool_calls=parsed_tool_calls)
+                    _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
                 else:
                     _req.add_assistant_message(self.tokenizer, content)
                     # Calculate the reward for each tool
@@ -419,6 +430,7 @@ class AsyncSGLangRollout(BaseRollout):
         position_ids = []
         loss_mask = []
         messages = []
+        reward_scores = {tool_name: [] for tool_name in self._tool_map.keys()}
         for req in sorted_output_req_list:
             assert req.state == AsyncRolloutRequestStateEnum.COMPLETED, f"Request {req.request_id} is not completed"
             assert len(req.input_ids) == len(req.attention_mask) == len(req.position_ids) == len(req.loss_mask), \
@@ -432,13 +444,17 @@ class AsyncSGLangRollout(BaseRollout):
             prompt_ids.append(torch.tensor(req.prompt_ids))
             response_ids.append(torch.tensor(req.response_ids))
             messages.append(req.messages)
+            for tool_name, score in req.reward_scores.items():
+                reward_scores[tool_name].append(score)
         input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
         prompt_ids = pad_sequence(prompt_ids, batch_first=True, padding_value=self.pad_token_id)
         response_ids = pad_sequence(response_ids, batch_first=True, padding_value=self.pad_token_id)
         attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
         position_ids = pad_sequence(position_ids, batch_first=True, padding_value=0)
         loss_mask = pad_sequence(loss_mask, batch_first=True, padding_value=0)
-
+        reward_scores = {tool_name: torch.tensor(scores) for tool_name, scores in reward_scores.items()}
+        reward_scores_tensor = torch.stack(list(reward_scores.values()), dim=1)
+        
         # Construct the batch data
         batch = TensorDict(
             {
@@ -448,12 +464,12 @@ class AsyncSGLangRollout(BaseRollout):
                 "attention_mask": attention_mask,
                 "position_ids": position_ids,
                 "loss_mask": loss_mask,
-                "reward_scores": torch.zeros_like(input_ids),
+                "reward_scores": reward_scores_tensor,
             },
             batch_size=len(req_list)
         )
 
-        return DataProto(batch=batch, non_tensor_batch={"messages": messages})
+        return DataProto(batch=batch, non_tensor_batch={"messages": messages, "tool_names": list(reward_scores.keys())})
     
     def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> List[AsyncRolloutRequest]:
         assert 'raw_prompt' in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
