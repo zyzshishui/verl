@@ -17,6 +17,7 @@ Contain small torch utilities
 
 from typing import Dict, Union, List, Optional
 
+import numpy as np
 import torch
 import torch.distributed
 import torch.nn.functional as F
@@ -117,7 +118,11 @@ def masked_sum(values, mask, axis=None):
 
 def masked_mean(values, mask, axis=None):
     """Compute mean of tensor with a masked values."""
-    return (values * mask).sum(axis=axis) / mask.sum(axis=axis)
+    mask_sum = mask.sum(axis=axis)
+    if (mask_sum == 0).any():
+        # If mask is all zeros, return zeros with the same shape as the result would have
+        return torch.zeros_like((values * mask).sum(axis=axis))
+    return (values * mask).sum(axis=axis) / mask_sum
 
 
 def masked_var(values, mask, unbiased=True):
@@ -147,24 +152,27 @@ def masked_whiten(values, mask, shift_mean=True):
     return whitened
 
 
-def get_eos_mask(response_id: torch.Tensor, eos_token: Union[int, List[int]] = 2, dtype=torch.int64):
+def get_response_mask(response_id: torch.Tensor, eos_token: Union[int, List[int]] = 2, dtype=torch.int64):
     '''
     end of sentence token can be int or list: 1 or [1, 2]
-    e.g. eos_token=1
-    response_id: [0, 0, 2, 42, 3, 5, 1, 0, 0]
-    eos_mask:     [1, 1, 1, 1,  1, 1, 1, 0, 0]
+    e.g. 
+    response_id = torch.tensor([[20, 10, 34, 1, 0, 0, 0],
+                                [78, 0, 76, 2, 1, 0, 0],
+                                [23, 98, 1, 0, 0, 0, 0],
+                                [33, 3, 98, 45, 1, 0, 0]])
+    #eos_token=1
+    response_mask:  tensor([[1, 1, 1, 1, 0, 0, 0],
+                            [1, 1, 1, 1, 1, 0, 0],
+                            [1, 1, 1, 0, 0, 0, 0],
+                            [1, 1, 1, 1, 1, 0, 0]])
+    #eos_token=[1,2]
+    response_mask:  tensor([[1, 1, 1, 1, 0, 0, 0],
+                            [1, 1, 1, 1, 0, 0, 0],
+                            [1, 1, 1, 0, 0, 0, 0],
+                            [1, 1, 1, 1, 1, 0, 0]])
     '''
-    if isinstance(eos_token, int):
-        eos_token = [eos_token]
-
-    eos_mask = torch.zeros_like(response_id, dtype=torch.bool)
-    for token in eos_token:
-        eos_mask |= response_id.eq(token)
-
-    eos_mask = eos_mask.long()
-    eos_mask = (torch.cumsum(eos_mask, dim=1) - eos_mask).bool()
-    eos_mask = torch.logical_not(eos_mask).to(dtype)
-    return eos_mask
+    eos_mask = torch.isin(response_id, torch.tensor(eos_token, device=response_id.device)).int()
+    return (eos_mask.cumsum(dim=1) - eos_mask).eq(0).to(dtype)
 
 
 def compute_grad_norm(model: nn.Module):
@@ -183,6 +191,16 @@ def broadcast_dict_tensor(tensors: Union[Dict[str, torch.Tensor], TensorDict], s
 
     for key in tensors.sorted_keys:
         torch.distributed.broadcast(tensors[key], src=src, group=group, async_op=False)
+
+
+# def broadcast_dict_non_tensor(data: Dict[str, List], src, group):
+#     for key in data.keys():
+#         torch.distributed.broadcast_object_list(data[key], src=src, group=group)
+
+
+def broadcast_dict_non_tensor(data: Dict[str, List], src, group):
+    for key in data.keys():
+        torch.distributed.broadcast_object_list(data[key], src=src, group=group)
 
 
 def allgather_dict_tensors(tensors: Union[Dict[str, torch.Tensor], TensorDict], size, group, dim=0):
@@ -217,6 +235,31 @@ def allgather_dict_tensors(tensors: Union[Dict[str, torch.Tensor], TensorDict], 
         output = TensorDict(source=output, batch_size=tensors.batch_size[0] * size)
 
     return output
+
+
+def all_gather_dict_non_tensors(data: Dict[str, List], size, group):
+    output = {}
+    sorted_keys = sorted(data.keys())
+    for key in sorted_keys:
+        val = data[key]
+        output[key] = [None for _ in range(size)]
+        print(f"nodedup all gathering {torch.distributed.get_rank()=} {key=} {val=}")
+        torch.distributed.all_gather_object(output[key], val, group=group)
+        print(f"nodedup all gathering {torch.distributed.get_rank()=} {key=} {output[key]=}")
+        output[key] = np.concatenate(output[key], axis=0)
+    print(f"nodedup all gathering {torch.distributed.get_rank()=} {output=}")
+    return output
+
+
+# def all_gather_dict_non_tensors(data: Dict[str, List], size, group):
+#     output = {}
+#     sorted_keys = sorted(data.keys())
+#     for key in sorted_keys:
+#         val = data[key]
+#         output[key] = [None for _ in range(size)]
+#         torch.distributed.all_gather_object(output[key], val, group=group)
+#         output[key] = np.concatenate(output[key], axis=0)
+#     return output
 
 
 def split_dict_tensor_into_batches(tensors: TensorDict, batch_size) -> List[TensorDict]:
