@@ -30,6 +30,7 @@ import os
 import asyncio
 from uuid import uuid4
 from contextlib import contextmanager
+from copy import deepcopy
 from typing import TYPE_CHECKING, List, Optional
 from omegaconf import DictConfig
 from tensordict import TensorDict
@@ -330,23 +331,56 @@ class AsyncSGLangRollout(BaseRollout):
 
         return DataProto(batch=batch)
     
-    async def _async_rollout_a_request(self, req: AsyncRolloutRequest) -> AsyncRolloutRequest:
+    async def _async_rollout_a_request(self, req: AsyncRolloutRequest, do_sample: bool = True) -> AsyncRolloutRequest:
+        _req = deepcopy(req)
         finish_reason_type = None
+        output = None
         while True:
-            if req.state == AsyncRolloutRequestStateEnum.PENDING:
+            if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 for tool in self._tool_map.values():
-                    tool.create(req.request_id)
-                req.state = AsyncRolloutRequestStateEnum.RUNNING
-                generation_prompt = req.get_generation_prompt(self.tokenizer)
-                output = await self.inference_engine.async_generate(
-                    prompt=generation_prompt,
-                    sampling_params=self.sampling_params,
-                    return_logprob=False,
-                )
+                    tool.create(_req.request_id)
+                _req.state = AsyncRolloutRequestStateEnum.RUNNING
+            elif _req.state == AsyncRolloutRequestStateEnum.TOOL_CALLING:
+                if _req.messages[-1].tool_calls is not None:
+                    parsed_tool_calls = _req.messages[-1].tool_calls
+                    tool_call_results = await asyncio.gather(*[
+                        self._tool_map[tool_call.function.name].execute(_req.request_id, tool_call.function.arguments)
+                        for tool_call in parsed_tool_calls
+                    ])
+                    for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
+                        _req.add_tool_response_message(self.tokenizer, resp)
+                    _req.state = AsyncRolloutRequestStateEnum.RUNNING
+                else:
+                    raise ValueError(f"Unexpected tool calling last message state: {_req.messages[-1]}")
+            elif _req.state == AsyncRolloutRequestStateEnum.RUNNING:
+                generation_prompt = _req.get_generation_prompt(self.tokenizer)
+                if not do_sample:
+                    kwargs = dict(
+                        n=1,
+                        presence_penalty=0.0,
+                        frequency_penalty=0.0,
+                        repetition_penalty=1.0,
+                        temperature=0,
+                        top_p=1,
+                        top_k=-1,
+                        ignore_eos=False,
+                        min_new_tokens=0,
+                        max_new_tokens=self.config.response_length,
+                        skip_special_tokens=True,
+                        spaces_between_special_tokens=True,
+                    )
+                # users can customize different sampling_params at different run
+                with self.update_sampling_params(**kwargs):
+                    output = await self.inference_engine.async_generate(
+                        prompt=generation_prompt,
+                        sampling_params=self.sampling_params,
+                        return_logprob=False,
+                    )
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 if self._function_call_parser and self._function_call_parser.has_tool_call(content):
                     finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
+                    _req.state = AsyncRolloutRequestStateEnum.TOOL_CALLING
                     content, tool_calls = self._function_call_parser.parse_non_stream(content)
                     parsed_tool_calls = [
                         OpenAIFunctionToolCall(
@@ -354,30 +388,72 @@ class AsyncSGLangRollout(BaseRollout):
                             function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
                         ) for tool_call in tool_calls
                     ]
-                    tool_call_results = []
-                    for tool_call in parsed_tool_calls:
-                        tool = self._tool_map[tool_call.function.name]
-                        resp = tool.execute(req.request_id, tool_call.function.arguments)
-                        tool_call_results.append((tool_call, resp))
-                req.add_assistant_message(self.tokenizer, content)
-            elif req.state == AsyncRolloutRequestStateEnum.RUNNING:
-                if finish_reason_type == "stop":
-                    req.state = AsyncRolloutRequestStateEnum.COMPLETED
-                    req.messages.append(Message(role="assistant", content=content))
+                    _req.add_assistant_message(self.tokenizer, content, tool_calls=parsed_tool_calls)
                 else:
-                    req.state = AsyncRolloutRequestStateEnum.FAILED
-        return req
-    
-    async def _async_rollout_a_batch(self, req_list: List[AsyncRolloutRequest]) -> List[AsyncRolloutRequest]:
-        output_req_list =  await asyncio.gather(*[self._async_rollout_a_request(req) for req in req_list])
-        return output_req_list
+                    _req.add_assistant_message(self.tokenizer, content)
+                    # Calculate the reward for each tool
+                    tool_reward_scores = {}
+                    for name, tool in self._tool_map.items():
+                        tool_reward_scores[name] = tool.calc_reward(_req.request_id)
+                    _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
+                    break
+        return _req
     
     @torch.no_grad()
-    def generate_sequences_with_tools(self, prompts: DataProto, **kwargs) -> DataProto:
+    def generate_sequences_with_tools(self,  prompts: DataProto, **kwargs) -> DataProto:
         req_list = self._preprocess_prompt_to_async_rollout_requests(prompts, self.config.n)
+        # Async rollout with tools support
         loop = asyncio.get_event_loop()
-        output_req_list = loop.run_until_complete(self._async_rollout_a_batch(req_list))
-        return prompts
+        output_req_list =  loop.run_until_complete(
+            asyncio.gather(
+                *[self._async_rollout_a_request(req, prompts.meta_info.get("do_sample", True)) 
+                  for req in req_list],
+            )
+        )
+        sorted_output_req_list = sorted(output_req_list, key=lambda x: (x.batch_data_id, x.rollout_offset))
+        # Construct the batch data
+        input_ids = []
+        prompt_ids = []
+        response_ids = []
+        attention_mask = []
+        position_ids = []
+        loss_mask = []
+        messages = []
+        for req in sorted_output_req_list:
+            assert req.state == AsyncRolloutRequestStateEnum.COMPLETED, f"Request {req.request_id} is not completed"
+            assert len(req.input_ids) == len(req.attention_mask) == len(req.position_ids) == len(req.loss_mask), \
+                f"Request {req.request_id} has different length of input_ids, attention_mask, position_ids, loss_mask"
+            assert len(req.input_ids) <= self.config.max_model_len, \
+                f"Request {req.request_id} has input_ids length {len(req.input_ids)} greater than max_model_len {self.config.max_model_len}"
+            input_ids.append(torch.tensor(req.input_ids))
+            attention_mask.append(torch.tensor(req.attention_mask))
+            position_ids.append(torch.tensor(req.position_ids))
+            loss_mask.append(torch.tensor(req.loss_mask))
+            prompt_ids.append(torch.tensor(req.prompt_ids))
+            response_ids.append(torch.tensor(req.response_ids))
+            messages.append(req.messages)
+        input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
+        prompt_ids = pad_sequence(prompt_ids, batch_first=True, padding_value=self.pad_token_id)
+        response_ids = pad_sequence(response_ids, batch_first=True, padding_value=self.pad_token_id)
+        attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
+        position_ids = pad_sequence(position_ids, batch_first=True, padding_value=0)
+        loss_mask = pad_sequence(loss_mask, batch_first=True, padding_value=0)
+
+        # Construct the batch data
+        batch = TensorDict(
+            {
+                "prompts": prompt_ids,
+                "responses": response_ids,
+                "input_ids": input_ids,  # here input_ids become the whole sentences
+                "attention_mask": attention_mask,
+                "position_ids": position_ids,
+                "loss_mask": loss_mask,
+                "reward_scores": torch.zeros_like(input_ids),
+            },
+            batch_size=len(req_list)
+        )
+
+        return DataProto(batch=batch, non_tensor_batch={"messages": messages})
     
     def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> List[AsyncRolloutRequest]:
         assert 'raw_prompt' in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
@@ -409,9 +485,12 @@ class AsyncSGLangRollout(BaseRollout):
                     messages=[Message.model_validate(msg) for msg in raw_prompt],
                     tools=self._tool_schemas,
                     input_ids=_input_ids,
+                    prompt_ids=_input_ids,
+                    response_ids=[],
                     attention_mask=_attention_mask,
                     position_ids=_position_ids,
                     loss_mask=[0] * len(_input_ids),
+                    reward_scores={},
                 ))
 
         return req_list

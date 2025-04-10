@@ -1,5 +1,5 @@
 import json
-from typing import Optional
+from typing import Optional, Tuple
 from uuid import uuid4
 from .base_tool import BaseTool
 from .data_model import OpenAIFunctionToolSchema, OpenAIFunctionParametersSchema, OpenAIFunctionParsedSchema
@@ -53,11 +53,11 @@ class Gsm8kTool(BaseTool):
         }
         return instance_id
     
-    def execute(self, instance_id: str, parameters: str) -> str:
+    def execute(self, instance_id: str, parameters: str) -> Tuple[str, float, dict]:
         parameters = json.loads(parameters)
         self._instance_dict[instance_id]["response"] = parameters.get("response", "")
         self._instance_dict[instance_id]["ground_truth"] = parameters.get("ground_truth", "")
-        return "Updated the response and ground truth in the query."
+        return "Updated the response and ground truth in the query.", 0.0, {}
     
     def calc_reward(self, instance_id: str) -> float:
         return gsm8k.compute_score(self._instance_dict[instance_id]["response"], self._instance_dict[instance_id]["ground_truth"])
