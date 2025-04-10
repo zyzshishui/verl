@@ -58,8 +58,8 @@ class AsyncRolloutRequest(BaseModel):
 
     format_config: dict = {
         "chatml": {
-            "prefix_msg": "<|im_start|>assistant\n",
-            "suffix_msg": "<|im_end|>\n",
+            "assistant_prefix_msg": "<|im_start|>assistant\n",
+            "assistant_suffix_msg": "<|im_end|>\n",
             "tool_prefix_msg": "<|im_start|>tool\n",
             "tool_suffix_msg": "<|im_end|>\n",
         }
@@ -83,12 +83,22 @@ class AsyncRolloutRequest(BaseModel):
         """Currently, we only support chatml format."""
         msg = Message(role="assistant", content=content, tool_calls=tool_calls)
         self.messages.append(msg)
+        if tool_calls is not None:
+            content_with_tool_calls: str = tokenizer.apply_chat_template(  # type: ignore
+                conversation=[msg.model_dump()], 
+                add_generation_prompt=False, 
+                tokenize=False
+            )
+        else:
+            content_with_tool_calls = content
         # TODO: support other formats
         if format in self.format_config:
-            prefix_msg = self.format_config[format]["prefix_msg"]
+            prefix_msg = self.format_config[format]["assistant_prefix_msg"]
             prefix_token_ids = tokenizer.encode(prefix_msg, add_special_tokens=False)
-            suffix_msg = self.format_config[format]["suffix_msg"]
+            suffix_msg = self.format_config[format]["assistant_suffix_msg"]
             suffix_token_ids = tokenizer.encode(suffix_msg, add_special_tokens=False)
+            if tool_calls is not None:
+                content = content_with_tool_calls.split(f"{prefix_msg}")[-1].split(f"{suffix_msg}")[0]
             content_token_ids = tokenizer.encode(content, add_special_tokens=False)
             if self.input_ids[-len(prefix_token_ids):] == prefix_token_ids:
                 append_token_ids = content_token_ids + suffix_token_ids
