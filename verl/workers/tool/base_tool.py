@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, Tuple
 from uuid import uuid4
 from .data_model import OpenAIFunctionToolSchema
 
@@ -22,18 +22,50 @@ class BaseTool(object):
         return self.tool_schema
     
     def create(self, instance_id: Optional[str] = None) -> str:
+        """Create a tool instance.
+
+        Args:
+            instance_id: The instance id of the tool.
+
+        Returns:
+            The instance id of the tool.
+        """
         if instance_id is None:
             return str(uuid4())
         else:
             return instance_id
     
-    def execute(self, instance_id: str, parameters: str) -> str:
-        return "Updated the tool state."
-    
+    async def execute(self, instance_id: str, parameters: str) -> Tuple[str, float, dict]:
+        """Execute the tool.
+
+        Args:
+            instance_id: The instance id of the tool.
+            parameters: The json string of the parameters of the tool.
+
+        Returns: tool_response, tool_reward_score, tool_metrics
+            tool_response: The response str of the tool.
+            tool_reward_score: The step reward score of the tool.
+            tool_metrics: The metrics of the tool.
+        """
+        return "Updated the tool state.", 0.0, {}
+
     def calc_reward(self, instance_id: str) -> float:
+        """Calculate the reward of the tool.
+
+        Args:
+            instance_id: The instance id of the tool.
+
+        Returns:
+            The reward of the tool.
+        """
         return 0.0
     
     def release(self, instance_id: str) -> None:
+        """Release the tool instance.
+
+        Args:
+            instance_id: The instance id of the tool.
+        """
         pass
     
     
