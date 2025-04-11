@@ -1,18 +1,15 @@
-# TODO(haoran): stuck in the loop
-# TODO(haoran): time control; loss_mask
-# TODO(haoran): check reason for loading weight
+# Note: Only support gsm8k task currently, and gsm8k training is not able to converge. Wait to community to improve it!
 import os
 from functools import partial
 from json import JSONDecodeError
-
 import torch
+from tensordict import TensorDict
 import sglang as sgl
-import torch.distributed
+import asyncio
 from omegaconf import DictConfig
 from sglang.srt.function_call_parser import FunctionCallParser
 from sglang.srt.openai_api.protocol import Tool
 from torch.distributed import DeviceMesh
-
 from verl import DataProto
 from verl.workers.rollout.base import BaseRollout
 from .loops import *
@@ -20,8 +17,6 @@ from .tasks import *
 
 
 def _pre_process_inputs(pad_token_id, token_ids: torch.Tensor) -> list[int]:
-    # remove the left padding in the prompt token_id
-    # pad_token_id = self.llm_engine.tokenizer.pad_token_id if self.llm_engine.tokenizer.pad_token_id is not None else self.llm_engine.tokenizer.eos_token_id
     non_pad_index = torch.nonzero(token_ids != pad_token_id, as_tuple=False)[0][0]
     token_ids = token_ids[non_pad_index:].tolist()
     return token_ids
@@ -44,8 +39,7 @@ class AsyncRollout(BaseRollout):
         self.total_len = config.prompt_length + config.response_length
         print(f"async rollout {config.gpu_memory_utilization=}")
         torch.distributed.barrier()
-        self.gsm8k_storage_sid2seq = {}
-        # print(f"nodedup in async rollout {os.environ['CUDA_VISIBLE_DEVICES']=} @ {torch.distributed.get_rank()=} {self.tp_rank=}")
+        self.sid2seq = {}
         if self.tp_rank == 0:
             self.engine = sgl.Engine(
                 model_path=model_path,
@@ -83,8 +77,7 @@ class AsyncRollout(BaseRollout):
         sampling_params.update(kwargs)
         tokenizer = self.engine.tokenizer_manager.tokenizer
 
-        if not hasattr(self, "gsm8k_metadata"):
-            self.gsm8k_metadata = {}
+        self.metadata_list = {}
 
         async def gen_id(input_ids):
             assert isinstance(input_ids, list) and isinstance(input_ids[0], int), f"not list int: {input_ids=}"
@@ -123,7 +116,7 @@ class AsyncRollout(BaseRollout):
             if tools:
                 parser = FunctionCallParser(
                     tools=[Tool.model_validate(tool) for tool in tools],
-                    tool_call_parser="qwen25",
+                    tool_call_parser=self.config.tool_call_parser
                 )
                 try:
                     normal_text, info_list = parser.parse_non_stream(ret["text"])
@@ -149,7 +142,8 @@ class AsyncRollout(BaseRollout):
         n = self.config.n
         repeated = prompts.repeat(n)
 
-        async def gsm8k_start(
+        # NOTE: only support gsm8k task currently
+        async def math_start(
             index,
             input_ids,
             data_source=None,
@@ -157,11 +151,11 @@ class AsyncRollout(BaseRollout):
             extra_info=None,
             **kwargs,
         ):
-            if index not in self.gsm8k_storage_sid2seq:
-                self.gsm8k_storage_sid2seq[index] = []
+            if index not in self.sid2seq:
+                self.sid2seq[index] = []
 
-            if index not in self.gsm8k_metadata:
-                self.gsm8k_metadata[index] = {
+            if index not in self.metadata_list:
+                self.metadata_list[index] = {
                     "data_source": data_source,
                     "reward_model": reward_model,
                     "extra_info": extra_info,
@@ -176,14 +170,13 @@ class AsyncRollout(BaseRollout):
                 "search_times": 0,
             }
 
-        async def gsm8k_obs(action_ids, sid, tokenizer, **kwargs):
+        # TODO(yuzhen): generalize for more tasks
+        async def math_obs(action_ids, sid, tokenizer, **kwargs):
             text = tokenizer.decode(action_ids, skip_special_tokens=False)
-            # print(f"\n[Stage 3] Model Generation {sid}:")
-            # print(f"Raw output: \n{text}\n")
 
-            if sid not in self.gsm8k_storage_sid2seq:
-                self.gsm8k_storage_sid2seq[sid] = []
-            self.gsm8k_storage_sid2seq[sid].extend(action_ids)
+            if sid not in self.sid2seq:
+                self.sid2seq[sid] = []
+            self.sid2seq[sid].extend(action_ids)
 
             if "####" in text:
                 return {
@@ -206,15 +199,12 @@ class AsyncRollout(BaseRollout):
                     0
             }
 
-        async def gsm8k_end(sid, done):
-            metadata = self.gsm8k_metadata.get(sid, {})
-            sequences = self.gsm8k_storage_sid2seq.get(sid, [])
+        async def math_end(sid, done):
+            metadata = self.metadata_list.get(sid, {})
+            sequences = self.sid2seq.get(sid, [])
             sequences_str = tokenizer.decode(sequences)
-            sequences = self.gsm8k_storage_sid2seq.get(sid, [])
+            sequences = self.sid2seq.get(sid, [])
             sequences_str = tokenizer.decode(sequences)
-
-            print(f"\n[Stage 4] Complete Generation for sample {sid}:")
-            print(f"Full response: {sequences_str}")
 
             data_source = metadata.get("data_source", "openai/gsm8k")
             reward_model = metadata.get("reward_model", {})
@@ -230,16 +220,9 @@ class AsyncRollout(BaseRollout):
                 data_source=data_source,
                 solution_str=sequences_str,
                 ground_truth=ground_truth,
-                extra_info=extra_info,
-                question=prompt_str,
-                tokenizer=tokenizer,
+                extra_info=extra_info
             )
-            # print(f"Final output for sample {sid}:")
-            # print(f"Question: {prompt_str}")
-            # print(f"Complete response:\n{sequences_str}")
-            # print(f"Ground truth: {ground_truth}")
-            # print(f"Score: {score}\n")
-
+            
             return {
                 "rm_final_scores": score,
             }
@@ -249,13 +232,6 @@ class AsyncRollout(BaseRollout):
         # TODO: partial is not the best way to pass arguments
         url = self.config["base_url"] if self.task_type == "gen_chat" else None
         loop_fn, start_fn, gen_fn, obs_fn, end_fn = {
-            "swedev": (
-                ids_agent_loop,
-                partial(swedev_start, tokenizer=tokenizer),
-                gen_id,
-                partial(swe_dev_obs, tokenizer=tokenizer),
-                swe_dev_end,
-            ),
             "gen_chat": (
                 openai_chat_agent_loop,
                 partial(openai_chat_start, url=url),
@@ -263,17 +239,16 @@ class AsyncRollout(BaseRollout):
                 partial(openai_chat_obs, url=url),
                 partial(openai_chat_end, url=url),
             ),
-            "gsm8k": (
+            "math": (
                 ids_agent_loop,
-                gsm8k_start,
+                math_start,
                 gen_id,
-                partial(gsm8k_obs, tokenizer=tokenizer),
-                gsm8k_end,
+                partial(math_obs, tokenizer=tokenizer),
+                math_end,
             ),
         }[self.task_type]
         # starting rollout
         device = torch.cuda.current_device()
-        print(f"In async rollout {self.config.max_turns=} {self.total_len=}")
         tasks = [
             loop_fn(
                 start_args=item.to_dict(),
@@ -327,15 +302,8 @@ class AsyncRollout(BaseRollout):
                 0  # it's fine because all the valid tokens a continuous
             )
 
-        print(f"{obs_metrics=}")
         obs_metrics = {k: torch.tensor(v, device=device) for k, v in obs_metrics.items()}
 
-        print(f"{tokenizer.decode(torch.where(prompts_ids[0] != pad, prompts_ids[0], 0))=}")
-        print(f"{tokenizer.decode(torch.where(responses[0] != pad, responses[0], 0))=}")
-        print(f"{tokenizer.decode(torch.where(all_ids[0] != pad, all_ids[0], 0))=}")
-        print(f"{tokenizer.decode(torch.where(loss_mask[0] == 1, all_ids[0], 0))=}")
-
-        # TODO: maybe put obs metrics into non_tensor_batch after resolving swedev "sids" & dr "rm_score" placement problem
         batch = TensorDict(
             {
                 "prompts": prompts_ids,

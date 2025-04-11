@@ -118,15 +118,7 @@ def masked_sum(values, mask, axis=None):
 
 def masked_mean(values, mask, axis=None):
     """Compute mean of tensor with a masked values."""
-<<<<<<< HEAD
-    mask_sum = mask.sum(axis=axis)
-    if (mask_sum == 0).any():
-        # If mask is all zeros, return zeros with the same shape as the result would have
-        return torch.zeros_like((values * mask).sum(axis=axis))
-    return (values * mask).sum(axis=axis) / mask_sum
-=======
     return (values * mask).sum(axis=axis) / (mask.sum(axis=axis) + 1e-8)
->>>>>>> main
 
 
 def masked_var(values, mask, unbiased=True):
@@ -195,12 +187,7 @@ def broadcast_dict_tensor(tensors: Union[Dict[str, torch.Tensor], TensorDict], s
 
     for key in tensors.sorted_keys:
         torch.distributed.broadcast(tensors[key], src=src, group=group, async_op=False)
-
-
-# def broadcast_dict_non_tensor(data: Dict[str, List], src, group):
-#     for key in data.keys():
-#         torch.distributed.broadcast_object_list(data[key], src=src, group=group)
-
+        
 
 def broadcast_dict_non_tensor(data: Dict[str, List], src, group):
     for key in data.keys():
@@ -253,17 +240,6 @@ def all_gather_dict_non_tensors(data: Dict[str, List], size, group):
         output[key] = np.concatenate(output[key], axis=0)
     print(f"nodedup all gathering {torch.distributed.get_rank()=} {output=}")
     return output
-
-
-# def all_gather_dict_non_tensors(data: Dict[str, List], size, group):
-#     output = {}
-#     sorted_keys = sorted(data.keys())
-#     for key in sorted_keys:
-#         val = data[key]
-#         output[key] = [None for _ in range(size)]
-#         torch.distributed.all_gather_object(output[key], val, group=group)
-#         output[key] = np.concatenate(output[key], axis=0)
-#     return output
 
 
 def split_dict_tensor_into_batches(tensors: TensorDict, batch_size) -> List[TensorDict]:

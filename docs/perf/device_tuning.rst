@@ -30,7 +30,6 @@ a PR and include a screenshot from Wandb or other verifiable evidence.
 7B
 ~~~
 
-<<<<<<< HEAD
 .. table::
    :widths: auto
 
@@ -51,53 +50,6 @@ a PR and include a screenshot from Wandb or other verifiable evidence.
    ====== ====== ====== ======== ====== ====== ======
    \      \      \        \      \      \
    ====== ====== ====== ======== ====== ====== ======
-=======
-.. list-table::
-    :widths: auto
-    :header-rows: 1
-    
-    * - Tag
-      - Model
-      - Task
-      - Resource
-      - Train
-      - Infer
-      - Link
-      - Contributor
-    * - MIN
-      - Qwen2-7B
-      - GRPO
-      - 2*H800
-      - fsdp
-      - vllm0.8.2
-      - `qwen2-7b_grpo_2_h800_fsdp_vllm <../../examples/tuning/7b/qwen2-7b_grpo_2_h800_fsdp_vllm.sh>`_
-      - `Xiangyongan <xiangyongan@bytedance.com>`_
-      
-
-14B
-~~~
-
-.. list-table::
-    :widths: auto
-    :header-rows: 1
-    
-    * - Tag
-      - Model
-      - Task
-      - Resource
-      - Train
-      - Infer
-      - Link
-      - Contributor
-    * - MIN
-      - Qwen2-14B
-      - GRPO
-      - 4*H800
-      - fsdp
-      - vllm0.8.2
-      - `qwen2-14b_grpo_4_h800_fsdp_vllm <../../examples/tuning/14b/qwen2-14b_grpo_4_h800_fsdp_vllm.sh>`_
-      - `Xiangyongan <xiangyongan@bytedance.com>`_
->>>>>>> main
 
 
 32B
@@ -115,34 +67,18 @@ a PR and include a screenshot from Wandb or other verifiable evidence.
 70B
 ~~~
 
-.. list-table::
-    :widths: auto
-    :header-rows: 1
+.. table::
+   :widths: auto
 
-    * - Tag
-      - Model
-      - Task
-      - Resource
-      - Train
-      - Infer
-      - Link
-      - Contributor
-    * - MIN
-      - Qwen2-70B
-      - GRPO
-      - 32*H20
-      - fsdp
-      - vllm0.8.2
-      - `qwen2-70b_grpo_32_h20_fsdp_vllm <../../examples/tuning/70b/qwen2-70b_grpo_32_h20_fsdp_vllm.sh>`_
-      - `Xiangyongan <xiangyongan@bytedance.com>`_
-    * - MIN
-      - Qwen2-70B
-      - GRPO
-      - 32*H800
-      - fsdp
-      - vllm0.8.3
-      - `qwen2-70b_grpo_32_h800_fsdp_vllm <../../examples/tuning/70b/qwen2-70b_grpo_32_h800_fsdp_vllm.sh>`_
-      - `Xiangyongan <xiangyongan@bytedance.com>`_
+   ====== ============= ====== ======== ====== ========= ================================== ==============
+   tag    model         task   resource train  infer     link                               Contributor                   
+   ====== ============= ====== ======== ====== ========= ================================== ==============
+   MIN    Qwen2-72B     GRPO   32*H20   fsdp   vllm0.8.2 qwen2-70b_grpo_32_h20_fsdp_vllm_   Xiangyongan_
+   ====== ============= ====== ======== ====== ========= ================================== ==============
+
+.. _qwen2-70b_grpo_32_h20_fsdp_vllm: ../../examples/tuning/70b/qwen2-70b_grpo_32_h20_fsdp_vllm.sh
+
+.. _Xiangyongan: xiangyongan@bytedance.com
 
 405B
 ~~~~
