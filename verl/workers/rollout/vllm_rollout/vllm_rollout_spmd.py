@@ -126,10 +126,7 @@ class vLLMRollout(BaseRollout):
             enable_chunked_prefill=config.enable_chunked_prefill,
             enable_prefix_caching=True,
             trust_remote_code=trust_remote_code,
-<<<<<<< HEAD
-=======
             seed=int(os.getenv("RANK", "0")) // tensor_parallel_size,
->>>>>>> main
         )
 
         # Offload vllm model to reduce peak memory usage

@@ -22,29 +22,22 @@ class NaiveRewardManager:
     """The reward manager.
     """
 
-<<<<<<< HEAD
     def __init__(self,
                  tokenizer,
                  num_examine,
                  compute_score=None,
                  reward_fn_key='data_source',
                  use_parallel=False) -> None:
-=======
-    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key='data_source') -> None:
->>>>>>> main
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
         self.compute_score = compute_score or _default_compute_score
         self.reward_fn_key = reward_fn_key
-<<<<<<< HEAD
         self.use_parallel = use_parallel
-=======
->>>>>>> main
 
     def __call__(self, data: DataProto, return_dict=False):
         """We will expand this function gradually based on the available datasets"""
+        
         # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
-
         if 'rm_scores' in data.batch.keys():
             if return_dict:
                 return {"reward_tensor": data.batch['rm_scores']}
@@ -57,15 +50,11 @@ class NaiveRewardManager:
         already_print_data_sources = {}
 
         if "rm_final_scores" in data.batch.keys():
-            # valid_response_lengths = []
-            # unfaith_penaltys = []
             for i in range(len(data)):
                 item = data.batch[i]
                 prompt_ids = item['prompts']
                 prompt_length = prompt_ids.shape[-1]
                 valid_response_length = item['attention_mask'][prompt_length:].sum()
-                # valid_response_lengths.append(valid_response_length)
-                # unfaith_penaltys.append(item['unfaith_penalty'])
                 reward_tensor[i, valid_response_length - 1] = item['rm_final_scores']
 
             return reward_tensor
@@ -92,13 +81,10 @@ class NaiveRewardManager:
 
             extra_info = data_item.non_tensor_batch.get('extra_info', None)
 
-<<<<<<< HEAD
             score = self.compute_score(data_source=data_source,
                                        solution_str=response_str,
                                        ground_truth=ground_truth,
-                                       extra_info=extra_info,
-                                       question=prompt_str,
-                                       tokenizer=self.tokenizer)
+                                       extra_info=extra_info)
 
             return i, valid_response_length, score, data_source, prompt_str, response_str, ground_truth
 
@@ -110,15 +96,6 @@ class NaiveRewardManager:
             results = [compute_score_for_item(i, data[i]) for i in range(len(data))]
 
         for i, valid_response_length, score, data_source, prompt_str, response_str, ground_truth in results:
-=======
-            score = self.compute_score(
-                data_source=data_source,
-                solution_str=response_str,
-                ground_truth=ground_truth,
-                extra_info=extra_info,
-            )
-
->>>>>>> main
             if isinstance(score, dict):
                 reward = score["score"]
                 # Store the information including original reward

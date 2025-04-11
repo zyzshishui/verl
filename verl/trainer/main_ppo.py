@@ -14,10 +14,9 @@
 """
 Note that we don't combine the main with ray_trainer as ray_trainer is used by other main.
 """
-import os
-
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
 
+import os
 import ray
 import hydra
 
@@ -66,15 +65,13 @@ def run_ppo(config) -> None:
     os.environ["ENSURE_CUDA_VISIBLE_DEVICES"] = os.environ.get('CUDA_VISIBLE_DEVICES', '')
     if not ray.is_initialized():
         # this is for local ray cluster
-        ray.init(
-            runtime_env={
-                'env_vars': {
-                    'TOKENIZERS_PARALLELISM': 'true',
-                    'NCCL_DEBUG': 'WARN',
-                    'VLLM_LOGGING_LEVEL': 'WARN',
-                    **dict(os.environ)
-                }
-            })
+        ray.init(runtime_env={
+            'env_vars': {
+                'TOKENIZERS_PARALLELISM': 'true',
+                'NCCL_DEBUG': 'WARN',
+                'VLLM_LOGGING_LEVEL': 'WARN'
+            }
+        })
 
     runner = TaskRunner.remote()
     ray.get(runner.run.remote(config))
@@ -118,45 +115,6 @@ class TaskRunner:
 
         from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
-<<<<<<< HEAD
-        if config.trainer.get("hybrid_engine", True):
-            role_worker_mapping = {
-                Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-                Role.Critic: ray.remote(CriticWorker),
-                Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
-            }
-
-            global_pool_id = 'global_pool'
-            resource_pool_spec = {
-                global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
-            }
-            mapping = {
-                Role.ActorRollout: global_pool_id,
-                Role.Critic: global_pool_id,
-                Role.RefPolicy: global_pool_id,
-            }
-        else:
-            role_worker_mapping = {
-                Role.Actor: ray.remote(ActorRolloutRefWorker),
-                Role.Critic: ray.remote(CriticWorker),
-                Role.RefPolicy: ray.remote(ActorRolloutRefWorker),
-                Role.Rollout: ray.remote(ActorRolloutRefWorker),
-            }
-
-            placement = config.trainer.placement
-            resource_pool_spec = {
-                "actor_pool": [placement["actor"]] * config.trainer.nnodes,
-                "ref_pool": [placement["ref"]] * config.trainer.nnodes,
-                "critic_pool": [placement.get("critic", 0)] * config.trainer.nnodes,
-                "rollout_pool": [placement["rollout"]] * config.trainer.nnodes,
-            }
-            mapping = {
-                Role.Actor: "actor_pool",
-                Role.Critic: "critic_pool",
-                Role.RefPolicy: "ref_pool",
-                Role.Rollout: "rollout_pool",
-            }
-=======
         role_worker_mapping = {
             Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
             Role.Critic: ray.remote(CriticWorker),
@@ -170,7 +128,6 @@ class TaskRunner:
             Role.ActorRollout: global_pool_id,
             Role.Critic: global_pool_id,
         }
->>>>>>> main
 
         # we should adopt a multi-source reward function here
         # - for rule-based rm, we directly call a reward score
@@ -206,12 +163,6 @@ class TaskRunner:
         elif reward_manager_name == 'dapo':
             from verl.workers.reward_manager import DAPORewardManager
             reward_manager_cls = DAPORewardManager
-<<<<<<< HEAD
-        elif reward_manager_name == "swedev":
-            from verl.workers.reward_manager import SWEDevRewardManager
-            reward_manager_cls = SWEDevRewardManager
-=======
->>>>>>> main
         else:
 
             raise NotImplementedError

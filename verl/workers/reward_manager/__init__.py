@@ -16,7 +16,3 @@ from .naive import NaiveRewardManager
 from .prime import PrimeRewardManager
 from .batch import BatchRewardManager
 from .dapo import DAPORewardManager
-<<<<<<< HEAD
-from .swedev import SWEDevRewardManager
-=======
->>>>>>> main

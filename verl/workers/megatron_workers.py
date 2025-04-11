@@ -150,13 +150,9 @@ class ActorRolloutRefWorker(MegatronWorker):
         self.tokenizer = hf_tokenizer(local_path)
 
         # Step 2: get the actor_model_config
-        actor_model_config = AutoConfig.from_pretrained(local_path,
-                                                        trust_remote_code=self.config.model.get(
-                                                            'trust_remote_code', False))
+        actor_model_config = AutoConfig.from_pretrained(local_path)
 
-        self.generation_config = get_generation_config(local_path,
-                                                       trust_remote_code=self.config.model.get(
-                                                           'trust_remote_code', False))
+        self.generation_config = get_generation_config(local_path)
 
         override_config_kwargs = {
             'bos_token_id': self.tokenizer.bos_token_id,
@@ -522,21 +518,15 @@ class CriticWorker(MegatronWorker):
         from megatron.core.models.gpt.gpt_model import ModelType
         from verl.utils.model import print_model_size, update_model_config
         from verl.utils.megatron.optimizer import get_megatron_optimizer
-<<<<<<< HEAD
-        from verl.utils.megatron_utils import get_model, init_megatron_optim_config, init_model_parallel_config, convert_config
-=======
         from verl.utils.megatron_utils import get_model, init_megatron_optim_config, convert_config
->>>>>>> main
         from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 
         # Step 1: initialize the tokenizer
         local_path = copy_to_local(model_path)
         self.tokenizer = hf_tokenizer(local_path)
 
-        # Step 2: get the actor_model_config
-        critic_model_config = AutoConfig.from_pretrained(local_path,
-                                                         trust_remote_code=self.config.model.get(
-                                                             'trust_remote_code', False))
+        # Step 2: get the critic_model_config
+        critic_model_config = AutoConfig.from_pretrained(local_path)
 
         override_config_kwargs = {
             'bos_token_id': self.tokenizer.bos_token_id,
@@ -723,9 +713,7 @@ class RewardModelWorker(MegatronWorker):
         self.tokenizer = hf_tokenizer(local_path)
 
         # Step 2: get the actor_model_config
-        rm_model_config = AutoConfig.from_pretrained(local_path,
-                                                     trust_remote_code=self.config.model.get(
-                                                         'trust_remote_code', False))
+        rm_model_config = AutoConfig.from_pretrained(local_path)
 
         override_config_kwargs = {
             'bos_token_id': self.tokenizer.bos_token_id,

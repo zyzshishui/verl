@@ -1,6 +1,3 @@
-from verl.utils.agent_tasks.swedev import *
-
-
 def default_prompt_generator(row):
     return row["prompt"]
 
@@ -10,10 +7,6 @@ def default_preprocess_dataset(dataframe):
 
 
 def preprocess_gsm8k_dataset(dataframe, tokenizer=None, max_prompt_length=1024):
-    # print("\n[Stage 1] Dataset Preprocessing:")
-    # sample = dataframe.iloc[0]
-    # print(f"Raw data sample:\n", sample)
-
     if "data_source" not in dataframe.columns:
         dataframe["data_source"] = "openai/gsm8k"
 
@@ -77,29 +70,15 @@ def generate_gsm8k_prompt(row):
         question[0],
     ]
 
-    # ground_truth = row.get('reward_model', {}).get('ground_truth', 'N/A')
-    # print("\n[Stage 2] Prompt Generation:")
-    # print(f"Input question: {question}")
-    # print(f"Ground truth: {ground_truth}")
-    # print(f"Generated messages: {messages}")
-
     return messages
 
 
 PROMPT_GENERATOR = {
-    "swedev": swedev_prompt_generator,
     "default": default_prompt_generator,
-    "gsm8k": generate_gsm8k_prompt,
+    "math": generate_gsm8k_prompt,
 }
 
 PREPROCESS_DATASET = {
-    "swedev": swedev_preprocess_dataset,
     "default": default_preprocess_dataset,
-    "gsm8k": preprocess_gsm8k_dataset,
+    "math": preprocess_gsm8k_dataset,
 }
-
-# SPECIFIC_TENSOR_LIST = {
-#     "swedev": ["instance_id"],
-#     "default": [],
-#     "gsm8k": []
-# }

@@ -194,10 +194,7 @@ def convert_config(hf_config: PretrainedConfig, megatron_config) -> TransformerC
         attention_dropout=hf_config.attention_dropout,
         hidden_dropout=getattr(hf_config, 'hidden_dropout', 0.0),
         add_qkv_bias=qkv_bias,
-<<<<<<< HEAD
-=======
         attention_backend=AttnBackend.flash,
->>>>>>> main
         bf16=dt is torch.bfloat16)
 
     return transformer_config
