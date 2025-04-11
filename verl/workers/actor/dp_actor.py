@@ -23,7 +23,10 @@ from torch import nn
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 
 from verl import DataProto
+<<<<<<< HEAD
 from verl.trainer.ppo import core_algos
+=======
+>>>>>>> main
 from verl.trainer.ppo.core_algos import compute_policy_loss, kl_penalty, agg_loss
 from verl.workers.actor import BasePPOActor
 from verl.utils.py_functional import append_to_dict
@@ -301,8 +304,13 @@ class DataParallelPPOActor(BasePPOActor):
                         response_mask = attention_mask[:, -response_length:]
 
                     clip_ratio = self.config.clip_ratio
+<<<<<<< HEAD
                     clip_ratio_low = self.config.get('clip_ratio_low', clip_ratio)
                     clip_ratio_high = self.config.get('clip_ratio_high', clip_ratio)
+=======
+                    clip_ratio_low = self.config.clip_ratio_low if self.config.clip_ratio_low is not None else clip_ratio
+                    clip_ratio_high = self.config.clip_ratio_high if self.config.clip_ratio_high is not None else clip_ratio
+>>>>>>> main
                     clip_ratio_c = self.config.get('clip_ratio_c', 3.0)
                     entropy_coeff = self.config.entropy_coeff
                     loss_agg_mode = self.config.loss_agg_mode
@@ -310,10 +318,13 @@ class DataParallelPPOActor(BasePPOActor):
                     # all return: (bsz, response_length)
                     entropy, log_prob = self._forward_micro_batch(micro_batch=data, temperature=temperature)
 
+<<<<<<< HEAD
                     print(
                         f"inside dp actor {response_mask.shape=} {response_length=} {responses.shape=} {old_log_prob.shape=} {log_prob.shape=}"
                     )
 
+=======
+>>>>>>> main
                     pg_loss, pg_clipfrac, ppo_kl, pg_clipfrac_lower = compute_policy_loss(
                         old_log_prob=old_log_prob,
                         log_prob=log_prob,
@@ -332,12 +343,21 @@ class DataParallelPPOActor(BasePPOActor):
                     if self.config.use_kl_loss:
                         ref_log_prob = data['ref_log_prob']
                         # compute kl loss
+<<<<<<< HEAD
                         kld = core_algos.kl_penalty(logprob=log_prob,
                                                     ref_logprob=ref_log_prob,
                                                     kl_penalty=self.config.kl_loss_type)
                         print("kld.shape", kld.shape)
                         print("response_mask.shape", response_mask.shape)
                         kl_loss = masked_mean(kld, response_mask)
+=======
+                        kld = kl_penalty(logprob=log_prob,
+                                         ref_logprob=ref_log_prob,
+                                         kl_penalty=self.config.kl_loss_type)
+                        kl_loss = agg_loss(loss_mat=kld,
+                                           loss_mask=response_mask,
+                                           loss_agg_mode=self.config.loss_agg_mode)
+>>>>>>> main
 
                         policy_loss = policy_loss + kl_loss * self.config.kl_loss_coef
                         metrics['actor/kl_loss'] = kl_loss.detach().item()

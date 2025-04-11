@@ -153,6 +153,7 @@ def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, 
 
     # compute kl between ref_policy and current policy
     # When apply_kl_penalty, algorithm.use_kl_in_reward=True, so the reference model has been enabled.
+<<<<<<< HEAD
     if 'ref_log_prob' in data.batch.keys():
         kld = core_algos.kl_penalty(data.batch['old_log_probs'], data.batch['ref_log_prob'],
                                     kl_penalty=kl_penalty)  # (batch_size, response_length)
@@ -161,6 +162,12 @@ def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, 
     else:
         beta = 0
         kld = torch.zeros_like(response_mask, dtype=torch.float32)
+=======
+    kld = core_algos.kl_penalty(data.batch['old_log_probs'], data.batch['ref_log_prob'],
+                                kl_penalty=kl_penalty)  # (batch_size, response_length)
+    kld = kld * response_mask
+    beta = kl_ctrl.value
+>>>>>>> main
 
     token_level_rewards = token_level_scores - beta * kld
 
@@ -379,10 +386,16 @@ class RayPPOTrainer(object):
                 assert config.actor_rollout_ref.actor.ppo_mini_batch_size % config.actor_rollout_ref.actor.ppo_micro_batch_size == 0
                 assert config.actor_rollout_ref.actor.ppo_micro_batch_size * sp_size >= n_gpus
 
+<<<<<<< HEAD
         if config.actor_rollout_ref.actor.get('loss_agg_mode', None) is not None:
             assert config.actor_rollout_ref.actor.loss_agg_mode in [
                 "token-mean", "seq-mean-token-sum", "seq-mean-token-mean"
             ], f"Invalid loss_agg_mode: {config.actor_rollout_ref.actor.loss_agg_mode}"
+=======
+        assert config.actor_rollout_ref.actor.loss_agg_mode in [
+            "token-mean", "seq-mean-token-sum", "seq-mean-token-mean"
+        ], f"Invalid loss_agg_mode: {config.actor_rollout_ref.actor.loss_agg_mode}"
+>>>>>>> main
 
         if config.algorithm.use_kl_in_reward and config.actor_rollout_ref.actor.use_kl_loss:
             print(f"NOTICE: You have both enabled in-reward kl and kl loss.")
@@ -420,6 +433,7 @@ class RayPPOTrainer(object):
         print("[validate_config] All configuration checks passed successfully!")
 
     def _create_dataloader(self):
+<<<<<<< HEAD
         if self.task_type == "gen_chat":
             spec = self.config.data.gen_chat
             train = spec.train
@@ -465,6 +479,23 @@ class RayPPOTrainer(object):
                 num_workers=self.config.data.get('filter_overlong_prompts_workers', None),
                 task_type=self.task_type,
             )
+=======
+        # TODO: we have to make sure the batch size is divisible by the dp size
+        self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
+                                         tokenizer=self.tokenizer,
+                                         processor=self.processor,
+                                         prompt_key=self.config.data.prompt_key,
+                                         image_key=self.config.data.get('image_key', 'images'),
+                                         max_prompt_length=self.config.data.max_prompt_length,
+                                         return_raw_chat=self.config.data.get('return_raw_chat', False),
+                                         truncation=self.config.data.get('truncation', 'error'),
+                                         filter_overlong_prompts=self.config.data.filter_overlong_prompts,
+                                         num_workers=self.config.data.get('filter_overlong_prompts_workers', None))
+        assert self.train_dataset.truncation == self.config.data.get(
+            'truncation', 'error'
+        ), f'dataset truncation {self.train_dataset.truncation} must be the same as config {self.config.data.get("truncation", "error")}'
+        # use sampler for better ckpt resume
+>>>>>>> main
         if self.config.data.shuffle:
             train_dataloader_generator = torch.Generator()
             train_dataloader_generator.manual_seed(self.config.data.get('seed', 1))
@@ -549,7 +580,6 @@ class RayPPOTrainer(object):
         self.validation_generations_logger.log(self.config.trainer.logger, samples, self.global_steps)
 
     def _validate(self):
-        reward_tensor_lst = []
         data_source_lst = []
         reward_extra_infos_dict: dict[str, list] = defaultdict(list)
 
@@ -703,6 +733,7 @@ class RayPPOTrainer(object):
         # NOTE: if you want to use a different resource pool for each role, which can support different parallel size,
         # you should not use `create_colocated_worker_cls`. Instead, directly pass different resource pool to different worker groups.
         # See https://github.com/volcengine/verl/blob/master/examples/ray/tutorial.ipynb for more information.
+<<<<<<< HEAD
         if self.hybrid_engine:
             all_wg: dict[str, RayWorkerGroup] = {}
             self.wg_dicts = []
@@ -718,6 +749,23 @@ class RayPPOTrainer(object):
                 all_wg.update(spawn_wg)
                 # keep the referece of WorkerDict to support ray >= 2.31. Ref: https://github.com/ray-project/ray/pull/45699
                 self.wg_dicts.append(wg_dict)
+=======
+        all_wg = {}
+        self.wg_dicts = []
+        wg_kwargs = {}  # Setting up kwargs for RayWorkerGroup
+        if OmegaConf.select(self.config.trainer, "ray_wait_register_center_timeout") is not None:
+            wg_kwargs["ray_wait_register_center_timeout"] = self.config.trainer.ray_wait_register_center_timeout
+
+        for resource_pool, class_dict in self.resource_pool_to_cls.items():
+            worker_dict_cls = create_colocated_worker_cls(class_dict=class_dict)
+            wg_dict = self.ray_worker_group_cls(resource_pool=resource_pool,
+                                                ray_cls_with_init=worker_dict_cls,
+                                                **wg_kwargs)
+            spawn_wg = wg_dict.spawn(prefix_set=class_dict.keys())
+            all_wg.update(spawn_wg)
+            # keep the referece of WorkerDict to support ray >= 2.31. Ref: https://github.com/ray-project/ray/pull/45699
+            self.wg_dicts.append(wg_dict)
+>>>>>>> main
 
             if self.use_critic:
                 self.critic_wg = all_wg['critic']
@@ -1067,10 +1115,15 @@ class RayPPOTrainer(object):
                         # compute rewards. apply_kl_penalty if available
                         if self.config.algorithm.use_kl_in_reward:
                             batch, kl_metrics = apply_kl_penalty(batch,
+<<<<<<< HEAD
                                                                  kl_ctrl=self.kl_ctrl,
                                                                  kl_penalty=self.config.algorithm.kl_penalty,
                                                                  multi_turn=self.config.actor_rollout_ref.actor.get(
                                                                      'multi_turn', False))
+=======
+                                                                 kl_ctrl=self.kl_ctrl_in_reward,
+                                                                 kl_penalty=self.config.algorithm.kl_penalty)
+>>>>>>> main
                             metrics.update(kl_metrics)
                         else:
                             batch.batch['token_level_rewards'] = batch.batch['token_level_scores']

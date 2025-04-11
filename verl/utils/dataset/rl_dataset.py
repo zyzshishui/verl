@@ -114,8 +114,12 @@ class RLHFDataset(Dataset):
                  return_raw_chat: bool = False,
                  truncation: str = 'error',
                  filter_overlong_prompts: bool = False,
+<<<<<<< HEAD
                  num_workers: Optional[int] = None,
                  task_type: str = 'default'):
+=======
+                 num_workers: Optional[int] = None):
+>>>>>>> main
         if not isinstance(parquet_files, (List, ListConfig)):
             parquet_files = [parquet_files]
 
@@ -137,11 +141,14 @@ class RLHFDataset(Dataset):
             self.num_workers = max(1, os.cpu_count() // 4)
         else:
             self.num_workers = min(num_workers, os.cpu_count())
+<<<<<<< HEAD
 
         self.task_type = task_type
         if self.task_type != 'default':
             self.preprocess_dataset = PREPROCESS_DATASET[self.task_type]
             self.prompt_generator = PROMPT_GENERATOR[self.task_type]
+=======
+>>>>>>> main
 
         # whether to store the dataset in state_dict()
         # default not store
@@ -194,10 +201,15 @@ class RLHFDataset(Dataset):
         Note that we also return the raw_input_ids so that it can be combined with other chat template
         """
         row_dict: dict = self.dataframe[item]
+<<<<<<< HEAD
         if self.task_type == 'default':
             chat = row_dict.pop(self.prompt_key)
         else:
             chat = self.prompt_generator(row_dict)
+=======
+
+        chat = row_dict.pop(self.prompt_key)
+>>>>>>> main
 
         prompt_with_chat_template = self.tokenizer.apply_chat_template(chat, add_generation_prompt=True, tokenize=False)
 

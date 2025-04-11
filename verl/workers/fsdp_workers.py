@@ -436,6 +436,7 @@ class ActorRolloutRefWorker(Worker):
                                               actor_optimizer=self.actor_optimizer)
 
         if self._is_rollout:
+<<<<<<< HEAD
             if not self._is_actor:
                 self.actor_module_fsdp = None
                 self.actor_optimizer = None
@@ -454,6 +455,10 @@ class ActorRolloutRefWorker(Worker):
                 rollout_count=self.config.get("rollout_count"),
                 exchange_size=self.config.get("exchange_size"),
             )
+=======
+            self.rollout, self.rollout_sharding_manager = self._build_rollout(
+                trust_remote_code=self.config.model.get('trust_remote_code', False))
+>>>>>>> main
 
         if self._is_ref:
             self.ref_module_fsdp = self._build_model_optimizer(model_path=self.config.model.path,
@@ -1138,7 +1143,10 @@ class RewardModelWorker(Worker):
 
         for i in range(data.batch.batch_size[0]):
             # extract raw prompt
-            chat: list = data.non_tensor_batch['raw_prompt'][i].tolist()
+            if isinstance(data.non_tensor_batch['raw_prompt'][i], list):
+                chat: list = data.non_tensor_batch['raw_prompt'][i]
+            else:
+                chat: list = data.non_tensor_batch['raw_prompt'][i].tolist()
 
             # extract response
             response_ids = data.batch['responses'][i]

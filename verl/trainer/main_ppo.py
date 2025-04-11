@@ -118,6 +118,7 @@ class TaskRunner:
 
         from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
+<<<<<<< HEAD
         if config.trainer.get("hybrid_engine", True):
             role_worker_mapping = {
                 Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
@@ -155,6 +156,21 @@ class TaskRunner:
                 Role.RefPolicy: "ref_pool",
                 Role.Rollout: "rollout_pool",
             }
+=======
+        role_worker_mapping = {
+            Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
+            Role.Critic: ray.remote(CriticWorker),
+        }
+
+        global_pool_id = 'global_pool'
+        resource_pool_spec = {
+            global_pool_id: [config.trainer.n_gpus_per_node] * config.trainer.nnodes,
+        }
+        mapping = {
+            Role.ActorRollout: global_pool_id,
+            Role.Critic: global_pool_id,
+        }
+>>>>>>> main
 
         # we should adopt a multi-source reward function here
         # - for rule-based rm, we directly call a reward score
@@ -190,10 +206,14 @@ class TaskRunner:
         elif reward_manager_name == 'dapo':
             from verl.workers.reward_manager import DAPORewardManager
             reward_manager_cls = DAPORewardManager
+<<<<<<< HEAD
         elif reward_manager_name == "swedev":
             from verl.workers.reward_manager import SWEDevRewardManager
             reward_manager_cls = SWEDevRewardManager
+=======
+>>>>>>> main
         else:
+
             raise NotImplementedError
 
         compute_score = get_custom_reward_fn(config)

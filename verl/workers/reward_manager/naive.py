@@ -22,17 +22,24 @@ class NaiveRewardManager:
     """The reward manager.
     """
 
+<<<<<<< HEAD
     def __init__(self,
                  tokenizer,
                  num_examine,
                  compute_score=None,
                  reward_fn_key='data_source',
                  use_parallel=False) -> None:
+=======
+    def __init__(self, tokenizer, num_examine, compute_score=None, reward_fn_key='data_source') -> None:
+>>>>>>> main
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
         self.compute_score = compute_score or _default_compute_score
         self.reward_fn_key = reward_fn_key
+<<<<<<< HEAD
         self.use_parallel = use_parallel
+=======
+>>>>>>> main
 
     def __call__(self, data: DataProto, return_dict=False):
         """We will expand this function gradually based on the available datasets"""
@@ -85,6 +92,7 @@ class NaiveRewardManager:
 
             extra_info = data_item.non_tensor_batch.get('extra_info', None)
 
+<<<<<<< HEAD
             score = self.compute_score(data_source=data_source,
                                        solution_str=response_str,
                                        ground_truth=ground_truth,
@@ -102,6 +110,15 @@ class NaiveRewardManager:
             results = [compute_score_for_item(i, data[i]) for i in range(len(data))]
 
         for i, valid_response_length, score, data_source, prompt_str, response_str, ground_truth in results:
+=======
+            score = self.compute_score(
+                data_source=data_source,
+                solution_str=response_str,
+                ground_truth=ground_truth,
+                extra_info=extra_info,
+            )
+
+>>>>>>> main
             if isinstance(score, dict):
                 reward = score["score"]
                 # Store the information including original reward

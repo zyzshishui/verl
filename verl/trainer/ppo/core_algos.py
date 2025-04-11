@@ -394,7 +394,11 @@ def compute_policy_loss(old_log_prob,
     pg_losses3 = -advantages * clip_ratio_c
     clip_pg_losses2 = torch.min(pg_losses3, clip_pg_losses1)
     pg_clipfrac_lower = verl_F.masked_mean(
+<<<<<<< HEAD
         torch.gt(clip_pg_losses2, pg_losses3) * (advantages < 0).float(), response_mask)
+=======
+        torch.gt(clip_pg_losses1, pg_losses3) * (advantages < 0).float(), response_mask)
+>>>>>>> main
 
     pg_losses = torch.where(advantages < 0, clip_pg_losses2, clip_pg_losses1)
     pg_loss = agg_loss(loss_mat=pg_losses, loss_mask=response_mask, loss_agg_mode=loss_agg_mode)
