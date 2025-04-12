@@ -117,7 +117,6 @@ class AsyncSGLangRollout(BaseRollout):
         config: DictConfig,
         tokenizer,
         model_hf_config,
-        tool_list: Optional[List[BaseTool]] = None,
         **kwargs,
     ):
         """A SGLang rollout. It requires the module is supported by the SGLang.
@@ -132,14 +131,15 @@ class AsyncSGLangRollout(BaseRollout):
         super().__init__()
         self.config = config
         
-        if config.get("tool_kwargs") and config.tool_kwargs.get("tools_config_file"):
+        tool_list = None
+        if config.get("tool_kwargs") and config.tool_kwargs.get("tools_config_file", None) is not None:
             import sys
             import importlib.util
+            from omegaconf import OmegaConf
             
-            tool_list = []
-            
-            tools_config_path = config.tool_kwargs.get("tools_config_file")
-            tools_config = OmegaConf.load(tools_config_path)
+            tool_list = []            
+            tools_config_file = config.tool_kwargs.tools_config_file
+            tools_config = OmegaConf.load(tools_config_file)
             
             for tool_config in tools_config.tools:
                 cls_name = tool_config.class_name
