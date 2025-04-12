@@ -154,7 +154,7 @@ class AsyncSGLangRollout(BaseRollout):
                     module = sys.modules[module_name]
                     
                 tool_cls = getattr(module, class_name)
-                tool = tool_cls(config=OmegaConf.to_container(tool_config.config, resolve=True))
+                tool = tool_cls(config=OmegaConf.to_container(tool_config.tool_schema, resolve=True))
                 tool_list.append(tool)
 
         if tool_list is not None:
