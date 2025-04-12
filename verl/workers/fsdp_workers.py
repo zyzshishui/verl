@@ -386,7 +386,9 @@ class ActorRolloutRefWorker(Worker):
                                                                  device_mesh=rollout_device_mesh)
             log_gpu_memory_usage('After building sharding manager', logger=None)
             
-
+        else:
+            raise NotImplementedError(f"Rollout name: {self.config.rollout.name} is not supported")
+        
         return rollout, rollout_sharding_manager
 
     @register(dispatch_mode=Dispatch.ONE_TO_ALL)
