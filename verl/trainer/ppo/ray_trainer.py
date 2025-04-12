@@ -935,7 +935,7 @@ class RayPPOTrainer(object):
                             batch, kl_metrics = apply_kl_penalty(batch,
                                                                  kl_ctrl=self.kl_ctrl_in_reward,
                                                                  kl_penalty=self.config.algorithm.kl_penalty,
-                                                                 multi_turn=self.config.actor_rollout_ref.actor.get('multi_turn', False))
+                                                                 multi_turn=self.config.actor_rollout_ref.rollout.get('multi_turn', False))
                             metrics.update(kl_metrics)
                         else:
                             batch.batch['token_level_rewards'] = batch.batch['token_level_scores']
