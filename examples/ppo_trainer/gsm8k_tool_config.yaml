@@ -1,0 +1,15 @@
+tools:
+  - class_name: "tool.gsm8k_tool.Gsm8kTool"
+    tool_schema:
+      name: "calc_gsm8k_reward"
+      description: ""A tool for calculating the reward of gsm8k"
+      parameters:
+        type: "object"
+        properties:
+          response:
+            type: "string"
+            description: "The model's response to the GSM8K math problem"
+          ground_truth:
+            type: "string"
+            description: "The ground truth answer to the GSM8K math problem"
+        required: ["response", "ground_truth"]
