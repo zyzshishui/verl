@@ -103,7 +103,7 @@ def _post_process_outputs(tokenizer, output):
 def get_tool_call_parser_type(tokenizer: PreTrainedTokenizer) -> str:
     for parser_type, parser_cls in FunctionCallParser.ToolCallParserEnum.items():
         parser = parser_cls()
-        if parser.bot_token in tokenizer.special_tokens_map:
+        if parser.bot_token in tokenizer.get_vocab() and (parser.eot_token == '' or parser.eot_token in tokenizer.get_vocab()):
             return parser_type
     else:
         raise ValueError(f"No tool call parser found for tokenizer {tokenizer}")
@@ -369,8 +369,7 @@ class AsyncSGLangRollout(BaseRollout):
         output = None
         while True:
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
-                for tool in self._tool_map.values():
-                    tool.create(_req.request_id)
+                await asyncio.gather(*[tool.create(_req.request_id) for tool in self._tool_map.values()])
                 _req.state = AsyncRolloutRequestStateEnum.RUNNING
             elif _req.state == AsyncRolloutRequestStateEnum.TOOL_CALLING:
                 if _req.messages[-1].tool_calls is not None:
@@ -429,9 +428,17 @@ class AsyncSGLangRollout(BaseRollout):
                 else:
                     _req.add_assistant_message(self.tokenizer, content)
                     # Calculate the reward for each tool
-                    tool_reward_scores = {}
-                    for name, tool in self._tool_map.items():
-                        tool_reward_scores[name] = tool.calc_reward(_req.request_id)
+                    async def calc_reward_and_release_fn(name: str, tool: BaseTool):
+                        reward = await tool.calc_reward(_req.request_id)
+                        await tool.release(_req.request_id)
+                        return name, reward
+
+                    tool_reward_tasks = [
+                        calc_reward_and_release_fn(name, tool)
+                        for name, tool in self._tool_map.items()
+                    ]
+                    tool_reward_scores = await asyncio.gather(*tool_reward_tasks)
+                    tool_reward_scores = dict(tool_reward_scores)
                     _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
                     break
         return _req

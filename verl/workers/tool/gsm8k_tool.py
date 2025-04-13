@@ -15,7 +15,8 @@ class Gsm8kTool(BaseTool):
     - `calc_reward`: calculate the reward respect to tool state.
     - `release`: release the tool instance.
     """
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, tool_schema: OpenAIFunctionToolSchema):
+        """
         _tool_schema = OpenAIFunctionToolSchema.model_validate({
             "type": "function",
             "function": {
@@ -37,13 +38,14 @@ class Gsm8kTool(BaseTool):
                 },
             }
         })
-        super().__init__(config, _tool_schema)
+        """
+        super().__init__(config, tool_schema)
         self._instance_dict = {}
 
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    def create(self, instance_id: Optional[str] = None) -> str:
+    async def create(self, instance_id: Optional[str] = None) -> str:
         if instance_id is None:
             instance_id = str(uuid4())
         self._instance_dict[instance_id] = {
@@ -53,14 +55,14 @@ class Gsm8kTool(BaseTool):
         }
         return instance_id
     
-    def execute(self, instance_id: str, parameters: str) -> Tuple[str, float, dict]:
+    async def execute(self, instance_id: str, parameters: str) -> Tuple[str, float, dict]:
         parameters = json.loads(parameters)
         self._instance_dict[instance_id]["response"] = parameters.get("response", "")
         self._instance_dict[instance_id]["ground_truth"] = parameters.get("ground_truth", "")
         return "Updated the response and ground truth in the query.", 0.0, {}
     
-    def calc_reward(self, instance_id: str) -> float:
+    async def calc_reward(self, instance_id: str) -> float:
         return gsm8k.compute_score(self._instance_dict[instance_id]["response"], self._instance_dict[instance_id]["ground_truth"])
     
-    def release(self, instance_id: str) -> None:
+    async def release(self, instance_id: str) -> None:
         del self._instance_dict[instance_id]
