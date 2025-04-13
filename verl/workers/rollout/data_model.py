@@ -1,6 +1,7 @@
 from enum import Enum
 from typing import List, Optional, Literal, Dict
 
+import torch
 from pydantic import BaseModel
 from transformers import PreTrainedTokenizer
 from verl.workers.tool.data_model import OpenAIFunctionToolSchema, OpenAIFunctionToolCall
@@ -55,6 +56,7 @@ class AsyncRolloutRequest(BaseModel):
     position_ids: List[int]
     loss_mask: List[int]
     reward_scores: Dict[str, float]
+    max_model_len: int = 32768
 
     format_config: dict = {
         "chatml": {
@@ -78,7 +80,8 @@ class AsyncRolloutRequest(BaseModel):
         tokenizer: PreTrainedTokenizer, 
         content: str, 
         tool_calls: Optional[List[OpenAIFunctionToolCall]] = None,
-        format: Literal["chatml"] = "chatml"
+        format: Literal["chatml"] = "chatml",
+        alreadyover_long: bool = False,
     ) -> None:
         """Currently, we only support chatml format."""
         msg = Message(role="assistant", content=content, tool_calls=tool_calls)
@@ -101,21 +104,26 @@ class AsyncRolloutRequest(BaseModel):
                 content = content_with_tool_calls.split(f"{prefix_msg}")[-1].split(f"{suffix_msg}")[0]
             content_token_ids = tokenizer.encode(content, add_special_tokens=False)
             if self.input_ids[-len(prefix_token_ids):] == prefix_token_ids:
-                append_token_ids = content_token_ids + suffix_token_ids
+                append_token_ids = content_token_ids
             elif self.input_ids[-len(suffix_token_ids):] == suffix_token_ids:
-                append_token_ids = prefix_token_ids + content_token_ids + suffix_token_ids
+                append_token_ids = prefix_token_ids + content_token_ids
             else:
-                raise ValueError(f"Unsupported end of message format: {tokenizer.decode(self.input_ids[-len(prefix_token_ids):])}")
+                max_len = max(len(prefix_token_ids), len(suffix_token_ids))
+                raise ValueError(f"Unsupported end of message format: {tokenizer.decode(self.input_ids[-max_len:])}, {tokenizer.decode(self.input_ids)=}, {self.messages=}")
+            if not alreadyover_long:
+                append_token_ids += suffix_token_ids
             self.input_ids += append_token_ids
             _attention_mask = [1] * len(append_token_ids)
             self.attention_mask += _attention_mask
-            _delta_position_ids = compute_position_id_with_mask(_attention_mask).tolist()
+            _delta_position_ids = compute_position_id_with_mask(torch.tensor(_attention_mask)).tolist()
             last_position_id = self.position_ids[-1]
             _position_ids = [pos_id + last_position_id for pos_id in _delta_position_ids]
             self.loss_mask += [1] * len(append_token_ids)
             self.position_ids += _position_ids
         else:
             raise ValueError(f"Unsupported format: {format}")
+        assert len(self.input_ids) == len(self.attention_mask) == len(self.position_ids) == len(self.loss_mask), \
+                f"Request {self.request_id} has different length of {len(self.input_ids)=}, {len(self.attention_mask)=}, {len(self.position_ids)=}, {len(self.loss_mask)=}"
     
     def add_tool_response_message(
         self, 
@@ -142,13 +150,15 @@ class AsyncRolloutRequest(BaseModel):
             self.input_ids += append_token_ids
             _attention_mask = [1] * len(append_token_ids)
             self.attention_mask += _attention_mask
-            _delta_position_ids = compute_position_id_with_mask(_attention_mask).tolist()
+            _delta_position_ids = compute_position_id_with_mask(torch.tensor(_attention_mask)).tolist()
             last_position_id = self.position_ids[-1]
             _position_ids = [pos_id + last_position_id for pos_id in _delta_position_ids]
             self.loss_mask += [0] * len(append_token_ids)
             self.position_ids += _position_ids
         else:
             raise ValueError(f"Unsupported format: {format}")
+        assert len(self.input_ids) == len(self.attention_mask) == len(self.position_ids) == len(self.loss_mask), \
+                f"Request {self.request_id} has different length of {len(self.input_ids)=}, {len(self.attention_mask)=}, {len(self.position_ids)=}, {len(self.loss_mask)=}"
     
     def finalize(
         self, 
@@ -165,8 +175,18 @@ class AsyncRolloutRequest(BaseModel):
             self.attention_mask.append(1)
             self.position_ids.append(self.position_ids[-1] + 1)
             self.loss_mask.append(0)
+            self.truncate_output_ids(tokenizer)
         elif finish_reason_type == FinishReasonTypeEnum.LENGTH:
             pass
         else:
             raise ValueError(f"Unsupported finalize finish reason type: {finish_reason_type}")
+        assert len(self.input_ids) == len(self.attention_mask) == len(self.position_ids) == len(self.loss_mask), \
+            f"Request {self.request_id} has different length of {len(self.input_ids)=}, {len(self.attention_mask)=}, {len(self.position_ids)=}, {len(self.loss_mask)=}"
 
+    def truncate_output_ids(self, tokenizer: PreTrainedTokenizer) -> None:
+        if len(self.input_ids) > self.max_model_len:
+            self.input_ids = self.input_ids[:self.max_model_len]
+            self.attention_mask = self.attention_mask[:self.max_model_len]
+            self.position_ids = self.position_ids[:self.max_model_len]
+            self.loss_mask = self.loss_mask[:self.max_model_len]
+            self.response_ids = self.input_ids[len(self.prompt_ids):]
