@@ -21,7 +21,7 @@ class BaseTool(object):
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    def create(self, instance_id: Optional[str] = None) -> str:
+    async def create(self, instance_id: Optional[str] = None) -> str:
         """Create a tool instance.
 
         Args:
@@ -49,7 +49,7 @@ class BaseTool(object):
         """
         return "Updated the tool state.", 0.0, {}
 
-    def calc_reward(self, instance_id: str) -> float:
+    async def calc_reward(self, instance_id: str) -> float:
         """Calculate the reward of the tool.
 
         Args:
@@ -60,7 +60,7 @@ class BaseTool(object):
         """
         return 0.0
     
-    def release(self, instance_id: str) -> None:
+    async def release(self, instance_id: str) -> None:
         """Release the tool instance.
 
         Args:
