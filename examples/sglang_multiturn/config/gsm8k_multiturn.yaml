@@ -18,7 +18,7 @@ actor_rollout_ref:
   hybrid_engine: True
   exchange_size: 1e9
   model:
-    path: Qwen/Qwen2-7B-Instruct
+    path: Qwen/Qwen2.5-7B
     external_lib: null
     override_config: { }
     enable_gradient_checkpointing: True
@@ -121,7 +121,7 @@ critic:
     warmup_style: constant  # select from constant/cosine
     total_training_steps: -1  # must be override by program
   model:
-    path: Qwen/Qwen2-7B-Instruct
+    path: Qwen/Qwen2.5-7B
     tokenizer_path: ${actor_rollout_ref.model.path}
     override_config: { }
     external_lib: ${actor_rollout_ref.model.external_lib}
