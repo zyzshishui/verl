@@ -12,3 +12,4 @@
 # See the License for the specific language governing permissions and
 
 from .sglang_rollout import SGLangRollout
+from .async_sglang_rollout import AsyncSGLangRollout

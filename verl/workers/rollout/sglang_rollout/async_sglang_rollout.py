@@ -37,7 +37,9 @@ from typing import TYPE_CHECKING, List, Optional
 from omegaconf import DictConfig
 from tensordict import TensorDict
 
-import torch.distributed
+import numpy as np
+import torch
+import torch.distributed as dist
 from torch.nn.utils.rnn import pad_sequence
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import PreTrainedTokenizer
@@ -54,6 +56,10 @@ from verl.workers.tool.data_model import OpenAIFunctionParsedSchema, OpenAIFunct
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.openai_api.protocol import Tool
 from sglang.srt.function_call_parser import FunctionCallParser
+from sglang.srt.server import Engine
+from sglang.srt.patch_torch import monkey_patch_torch_reductions
+from sglang.srt.model_executor.model_runner import LocalSerializedTensor
+from sglang.srt.utils import MultiprocessingSerializer, broadcast_pyobj
 
 
 logger = logging.getLogger(__file__)
@@ -172,13 +178,10 @@ class AsyncSGLangRollout(BaseRollout):
             tool_list = initialize_tools(tools_config)           
 
         if tool_list is not None:
-            self._tool_schemas = [tool.get_openai_tool_schema() for tool in tool_list]
+            self._tool_schemas = [tool.get_openai_tool_schema().model_dump() for tool in tool_list]
             self._tool_map = {tool.name: tool for tool in tool_list}
             self._tool_call_parser_type = get_tool_call_parser_type(tokenizer)
-            self._sgl_tools = [
-                Tool.model_validate(tool.model_dump())
-                for tool in self._tool_schemas
-            ]
+            self._sgl_tools = self._tool_schemas
             self._function_call_parser = FunctionCallParser(
                     self._sgl_tools, 
                     self._tool_call_parser_type,
@@ -193,7 +196,7 @@ class AsyncSGLangRollout(BaseRollout):
                     config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
         tensor_parallel_size = self.config.get("tensor_model_parallel_size", 1)
-        assert (tensor_parallel_size <= torch.distributed.get_world_size()
+        assert (tensor_parallel_size <= dist.get_world_size()
                ), "tensor parallel size should be less than or equal to the world size"
 
         if kwargs.get("train_tp", None) is not None:
@@ -207,8 +210,12 @@ class AsyncSGLangRollout(BaseRollout):
                 num_tp_per_train_tp=num_tp_per_train_tp,
             )
 
-        assert (model_hf_config.max_position_embeddings >= config.prompt_length +
-                config.response_length), "model context length should be greater than total sequence length"
+        if not self.config.get("max_model_len", None):
+            self.config.max_model_len = self.config.prompt_length + self.config.response_length
+        assert self.config.max_model_len >= self.config.prompt_length + self.config.response_length, \
+            f"max_model_len should be greater than total sequence length (prompt_length + response_length): {self.config.max_model_len} >= {self.config.prompt_length} + {self.config.response_length}"
+        assert (model_hf_config.max_position_embeddings >= self.config.max_model_len), \
+            "model context length should be greater than total sequence length"
 
         tp_size = tensor_parallel_size
         world_size = int(os.getenv("WORLD_SIZE", "-1"))
@@ -223,29 +230,56 @@ class AsyncSGLangRollout(BaseRollout):
 
         # get tp_rank of this process in this tp group
         visible_devices = [None] * device_mesh_cpu.size(1)
-        torch.distributed.all_gather_object(visible_devices, os.environ["CUDA_VISIBLE_DEVICES"],
+        dist.all_gather_object(visible_devices, os.environ["CUDA_VISIBLE_DEVICES"],
                                             device_mesh_cpu.get_group("tp"))
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(visible_devices)
 
-        self.inference_engine = VerlEngineWithAsync(
-            model_path=actor_module,
-            dtype=config.dtype,
-            mem_fraction_static=config.gpu_memory_utilization,
-            device_mesh_cpu=device_mesh_cpu["tp"],
-            enable_memory_saver=True,
-            base_gpu_id=0,
-            gpu_id_step=1,
-            # NOTE(Chenyang): if you want to debug the sglang engine
-            # please set the following parameters
-            # Otherwise, it will make the engine run too slow
-            # log_level="INFO",
-            # log_requests=True,
-            # log_requests_level=2,
-            # max_running_requests=1,
-        )
+        # initialize the inference engine
+        monkey_patch_torch_reductions()
+        nnodes = -(-tp_size // len(visible_devices))
+        self._device_mesh_cpu = device_mesh_cpu
+        self._tp_rank = device_mesh_cpu["tp"].get_local_rank()
+        self._tp_size = device_mesh_cpu["tp"].size()
+        tp_size_per_node = self._tp_size // nnodes
+        node_rank = self._tp_rank // tp_size_per_node
+        first_rank_in_node = self._tp_rank % tp_size_per_node == 0
+
+        if first_rank_in_node:
+            os.environ["SGLANG_BLOCK_NONZERO_RANK_CHILDREN"] = "0"
+            self._engine = Engine(
+                model_path=actor_module,
+                dtype=config.dtype,
+                mem_fraction_static=config.gpu_memory_utilization,
+                enable_memory_saver=True,
+                base_gpu_id=0,
+                gpu_id_step=1,
+                tp_size=self._tp_size,
+                node_rank=node_rank,
+                nnodes=nnodes,
+            )
+        else:
+            self._engine = None
+        
+        # self.inference_engine = VerlEngineWithAsync(
+        #     model_path=actor_module,
+        #     dtype=config.dtype,
+        #     mem_fraction_static=config.gpu_memory_utilization,
+        #     device_mesh_cpu=device_mesh_cpu["tp"],
+        #     enable_memory_saver=True,
+        #     base_gpu_id=0,
+        #     gpu_id_step=1,
+        #     # NOTE(Chenyang): if you want to debug the sglang engine
+        #     # please set the following parameters
+        #     # Otherwise, it will make the engine run too slow
+        #     # log_level="INFO",
+        #     # log_requests=True,
+        #     # log_requests_level=2,
+        #     # max_running_requests=1,
+        # )
 
         # offload
-        self.inference_engine.release_memory_occupation()
+        if self._tp_rank == 0:
+            self._engine.release_memory_occupation()
 
         kwargs = dict(n=1,
                       max_new_tokens=config.response_length,
@@ -281,10 +315,6 @@ class AsyncSGLangRollout(BaseRollout):
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
         # if self.config.free_cache_engine:
-        print(f"prompts.batch.keys: {prompts.batch.keys()}")
-        print(f"prompts.non_tensor_batch.keys: {prompts.non_tensor_batch.keys()}")
-        print(f"prompts.meta_info: {prompts.meta_info}")
-
         idx = prompts.batch["input_ids"]  # (bs, prompt_length)
         # left-padded attention_mask
         attention_mask = prompts.batch["attention_mask"]
@@ -325,14 +355,23 @@ class AsyncSGLangRollout(BaseRollout):
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
             print(f"{self.sampling_params=}")
-            loop = asyncio.get_event_loop()
-            output = loop.run_until_complete(self.inference_engine.async_generate(
-                prompt=None,  # because we have already convert it to prompt token id
-                sampling_params=self.sampling_params,
-                return_logprob=True,
-                input_ids=idx_list,
-            ))
-
+            if self._tp_rank == 0:
+                loop = asyncio.get_event_loop()
+                output = loop.run_until_complete(self._engine.async_generate(
+                    prompt=None,  # because we have already convert it to prompt token id
+                    sampling_params=self.sampling_params,
+                    return_logprob=True,
+                    input_ids=idx_list,
+                ))
+            else:
+                output = None
+            # Most naive implementation, can extract tensor and send via gloo if too slow
+            [output] = broadcast_pyobj(
+                data=[output],
+                rank=self._tp_rank,
+                dist_group=self._device_mesh_cpu["tp"].get_group(),
+                src=self._device_mesh_cpu["tp"].mesh[0].item(),
+            )
         out = _post_process_outputs(self.tokenizer, output)
 
         response = out[0].to(idx.device)
@@ -375,12 +414,13 @@ class AsyncSGLangRollout(BaseRollout):
         )
 
         # free cache engine
-        if self.config.free_cache_engine and self.inference_engine._engine is not None:
-            self.inference_engine._engine.tokenizer_manager.flush_cache()
+        if self.config.free_cache_engine and self._engine is not None:
+            self._engine.tokenizer_manager.flush_cache()
 
         return DataProto(batch=batch)
     
-    async def _async_rollout_a_request(self, req: AsyncRolloutRequest, do_sample: bool = True) -> AsyncRolloutRequest:
+    async def _async_rollout_a_request(self, req: AsyncRolloutRequest, do_sample: bool = True, **kwargs) -> AsyncRolloutRequest:
+        assert self._tp_rank == 0, "only the master process can call this function"
         _req = deepcopy(req)
         finish_reason_type = None
         output = None
@@ -397,6 +437,11 @@ class AsyncSGLangRollout(BaseRollout):
                     ])
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.add_tool_response_message(self.tokenizer, resp)
+                        if len(_req.input_ids) >= self.config.max_model_len:
+                            break
+                    if len(_req.input_ids) >= self.config.max_model_len:
+                        finish_reason_type = FinishReasonTypeEnum.STOP
+                        break
                     _req.state = AsyncRolloutRequestStateEnum.RUNNING
                 else:
                     raise ValueError(f"Unexpected tool calling last message state: {_req.messages[-1]}")
@@ -419,74 +464,88 @@ class AsyncSGLangRollout(BaseRollout):
                     )
                 # users can customize different sampling_params at different run
                 with self.update_sampling_params(**kwargs):
-                    output = await self.inference_engine.async_generate(
+                    output = await self._engine.async_generate(
                         prompt=generation_prompt,
                         sampling_params=self.sampling_params,
                         return_logprob=False,
                     )
+                # TODO(yuzhen): support batch rollout
+                if isinstance(output, list):
+                    output = output[0]
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
-                if self._function_call_parser and self._function_call_parser.has_tool_call(content):
-                    finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
-                    _req.state = AsyncRolloutRequestStateEnum.TOOL_CALLING
-                    try:
-                        normed_content, tool_calls = self._function_call_parser.parse_non_stream(content)
-                    except JSONDecodeError as e:
-                        logger.warning(f"Failed to parse tool calls from content: {content}")
-                        normed_content = content
-                        tool_calls = []
-                    parsed_tool_calls = [
-                        OpenAIFunctionToolCall(
-                            id=str(tool_call.tool_index), 
-                            function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
-                        ) for tool_call in tool_calls
-                    ]
-                    _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
-                else:
-                    _req.add_assistant_message(self.tokenizer, content)
-                    # Calculate the reward for each tool
-                    async def calc_reward_and_release_fn(name: str, tool: BaseTool):
-                        reward = await tool.calc_reward(_req.request_id)
-                        await tool.release(_req.request_id)
-                        return name, reward
-
-                    tool_reward_tasks = [
-                        calc_reward_and_release_fn(name, tool)
-                        for name, tool in self._tool_map.items()
-                    ]
-                    tool_reward_scores = await asyncio.gather(*tool_reward_tasks)
-                    tool_reward_scores = dict(tool_reward_scores)
-                    _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
+                if finish_reason_type == FinishReasonTypeEnum.LENGTH:
+                    _req.add_assistant_message(self.tokenizer, content, alreadyover_long=True)
                     break
+                else:
+                    if self._function_call_parser and self._function_call_parser.has_tool_call(content):
+                        finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
+                        _req.state = AsyncRolloutRequestStateEnum.TOOL_CALLING
+                        try:
+                            normed_content, tool_calls = self._function_call_parser.parse_non_stream(content)
+                        except JSONDecodeError as e:
+                            logger.warning(f"Failed to parse tool calls from content: {content}")
+                            normed_content = content
+                            tool_calls = []
+                        parsed_tool_calls = [
+                            OpenAIFunctionToolCall(
+                                id=str(tool_call.tool_index), 
+                                function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
+                            ) for tool_call in tool_calls
+                        ]
+                        _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
+                    else:
+                        _req.add_assistant_message(self.tokenizer, content)
+                        break
+
+        # Calculate the reward for each tool
+        async def calc_reward_and_release_fn(name: str, tool: BaseTool):
+            reward = await tool.calc_reward(_req.request_id)
+            await tool.release(_req.request_id)
+            return name, reward
+
+        tool_reward_tasks = [
+            calc_reward_and_release_fn(name, tool)
+            for name, tool in self._tool_map.items()
+        ]
+        tool_reward_scores = await asyncio.gather(*tool_reward_tasks)
+        tool_reward_scores = dict(tool_reward_scores)
+        _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
+
         return _req
     
     @torch.no_grad()
     def generate_sequences_with_tools(self,  prompts: DataProto, **kwargs) -> DataProto:
-        req_list = self._preprocess_prompt_to_async_rollout_requests(prompts, self.config.n)
         # Async rollout with tools support
-        loop = asyncio.get_event_loop()
-        output_req_list =  loop.run_until_complete(
-            asyncio.gather(
-                *[self._async_rollout_a_request(req, prompts.meta_info.get("do_sample", True)) 
-                  for req in req_list],
+        if self._tp_rank == 0:
+            req_list = self._preprocess_prompt_to_async_rollout_requests(prompts, self.config.n)
+            loop = asyncio.get_event_loop()
+            output_req_list =  loop.run_until_complete(
+                asyncio.gather(
+                    *[self._async_rollout_a_request(req, prompts.meta_info.get("do_sample", True), **kwargs) 
+                    for req in req_list],
+                )
             )
+            sorted_output_req_list = sorted(output_req_list, key=lambda x: (x.batch_data_id, x.rollout_offset))
+        else:
+            sorted_output_req_list = None
+
+        [sorted_output_req_list] = broadcast_pyobj(
+            data=[sorted_output_req_list],
+            rank=self._tp_rank,
+            dist_group=self._device_mesh_cpu["tp"].get_group(),
+            src=self._device_mesh_cpu["tp"].mesh[0].item(),
         )
-        sorted_output_req_list = sorted(output_req_list, key=lambda x: (x.batch_data_id, x.rollout_offset))
         # Construct the batch data
-        input_ids = []
-        prompt_ids = []
-        response_ids = []
-        attention_mask = []
-        position_ids = []
-        loss_mask = []
-        messages = []
-        reward_scores = {tool_name: [] for tool_name in self._tool_map.keys()}
+        input_ids, prompt_ids, response_ids, attention_mask, position_ids, loss_mask, messages = [], [], [], [], [], [], []
+        # reward_scores = {tool_name: [] for tool_name in self._tool_map.keys()}
+        reward_scores = []
         for req in sorted_output_req_list:
             assert req.state == AsyncRolloutRequestStateEnum.COMPLETED, f"Request {req.request_id} is not completed"
             assert len(req.input_ids) == len(req.attention_mask) == len(req.position_ids) == len(req.loss_mask), \
-                f"Request {req.request_id} has different length of input_ids, attention_mask, position_ids, loss_mask"
+                f"Request {req.request_id} has different length of {len(req.input_ids)=}, {len(req.attention_mask)=}, {len(req.position_ids)=}, {len(req.loss_mask)=}"
             assert len(req.input_ids) <= self.config.max_model_len, \
-                f"Request {req.request_id} has input_ids length {len(req.input_ids)} greater than max_model_len {self.config.max_model_len}"
+                f"Request {req.request_id} has input_ids length {len(req.input_ids)} greater than max_model_len {self.config.max_model_len},\n{self.tokenizer.decode(req.input_ids)=},\n{self.tokenizer.decode(req.prompt_ids)=},\n{self.tokenizer.decode(req.response_ids)=},\n{req.messages=},\n{req.max_model_len=}"
             input_ids.append(torch.tensor(req.input_ids))
             attention_mask.append(torch.tensor(req.attention_mask))
             position_ids.append(torch.tensor(req.position_ids))
@@ -494,16 +553,26 @@ class AsyncSGLangRollout(BaseRollout):
             prompt_ids.append(torch.tensor(req.prompt_ids))
             response_ids.append(torch.tensor(req.response_ids))
             messages.append(req.messages)
-            for tool_name, score in req.reward_scores.items():
-                reward_scores[tool_name].append(score)
+            reward_scores.append(req.reward_scores)
+            # for tool_name, score in req.reward_scores.items():
+            #     reward_scores[tool_name].append(score)
+
         input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
         prompt_ids = pad_sequence(prompt_ids, batch_first=True, padding_value=self.pad_token_id)
         response_ids = pad_sequence(response_ids, batch_first=True, padding_value=self.pad_token_id)
         attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
         position_ids = pad_sequence(position_ids, batch_first=True, padding_value=0)
         loss_mask = pad_sequence(loss_mask, batch_first=True, padding_value=0)
-        reward_scores = {tool_name: torch.tensor(scores) for tool_name, scores in reward_scores.items()}
-        reward_scores_tensor = torch.stack(list(reward_scores.values()), dim=1)
+        # reward_scores = {tool_name: torch.tensor(scores) for tool_name, scores in reward_scores.items()}
+        print(f"{reward_scores=}")
+        # print(f"{list(reward_scores.values())=}")
+        # if len(list(reward_scores.values())) > 0:
+        #     reward_scores_tensor = torch.stack(list(reward_scores.values()), dim=1)
+        #     tool_names = list(reward_scores.keys())
+        # else:
+        #     reward_scores_tensor = torch.zeros((len(req_list), 1))
+        #     tool_names = [["dummy_tool_name",]] * len(req_list)
+        # print(f"{reward_scores_tensor=}")
         
         # Construct the batch data
         batch = TensorDict(
@@ -514,12 +583,12 @@ class AsyncSGLangRollout(BaseRollout):
                 "attention_mask": attention_mask,
                 "position_ids": position_ids,
                 "loss_mask": loss_mask,
-                "reward_scores": reward_scores_tensor,
+                # "reward_scores": reward_scores_tensor,
             },
-            batch_size=len(req_list)
+            batch_size=len(sorted_output_req_list)
         )
 
-        return DataProto(batch=batch, non_tensor_batch={"messages": messages, "tool_names": list(reward_scores.keys())})
+        return DataProto(batch=batch, non_tensor_batch={"messages": np.array(messages), "reward_scores": np.array(reward_scores).reshape(-1, 1)})
     
     def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> List[AsyncRolloutRequest]:
         assert 'raw_prompt' in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
@@ -537,13 +606,13 @@ class AsyncSGLangRollout(BaseRollout):
                     input_data = self.tokenizer(prompt_with_chat_template, return_tensors="pt", add_special_tokens=False)
                     _input_ids = input_data['input_ids'][0].tolist()
                     _attention_mask = input_data['attention_mask'][0].tolist()
-                    _position_ids = compute_position_id_with_mask(_attention_mask).tolist()
+                    _position_ids = compute_position_id_with_mask(input_data['attention_mask'][0]).tolist()
                 else:
                     _input_ids = _pre_process_inputs(self.pad_token_id, prompts.batch['input_ids'][data_idx])
-                    _attention_mask = _pre_process_inputs(self.pad_token_id, prompts.batch['attention_mask'][data_idx])
-                    _position_ids = _pre_process_inputs(self.pad_token_id, prompts.batch["position_ids"][data_idx])
+                    _attention_mask = _pre_process_inputs(0, prompts.batch['attention_mask'][data_idx])
+                    _position_ids = compute_position_id_with_mask(torch.tensor(_attention_mask)).tolist()
                 
-                req_list.append(AsyncRolloutRequest(
+                req = AsyncRolloutRequest(
                     batch_data_id=data_idx,
                     rollout_offset=rollout_offset,
                     request_id=str(uuid4()),
@@ -557,6 +626,10 @@ class AsyncSGLangRollout(BaseRollout):
                     position_ids=_position_ids,
                     loss_mask=[0] * len(_input_ids),
                     reward_scores={},
-                ))
+                    max_model_len=self.config.max_model_len,
+                )
+                assert len(req.input_ids) == len(req.attention_mask) == len(req.position_ids) == len(req.loss_mask), \
+                    f"Request {req.request_id} has different length of {len(req.input_ids)=}, {len(req.attention_mask)=}, {len(req.position_ids)=}, {len(req.loss_mask)=},\n{self.pad_token_id=},\n{req.input_ids=},\n{req.attention_mask=},\n{req.position_ids=},\n{req.loss_mask=}"
+                req_list.append(req)
 
         return req_list

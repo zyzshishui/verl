@@ -3,7 +3,6 @@ data:
   train_files: /root/data/gsm8k/train.parquet
   val_files: /root/data/gsm8k/test.parquet
   prompt_key: prompt
-  reward_fn_key: data_source
   max_prompt_length: 512
   max_response_length: 512
   train_batch_size: 8
@@ -16,7 +15,6 @@ data:
 
 actor_rollout_ref:
   hybrid_engine: True
-  exchange_size: 1e9
   model:
     path: Qwen/Qwen2.5-7B
     external_lib: null
@@ -33,8 +31,6 @@ actor_rollout_ref:
     ppo_max_token_len_per_gpu: 32768 # n * ${data.max_prompt_length} + ${data.max_response_length}
     grad_clip: 0.5
     clip_ratio: 0.2
-    clip_ratio_low: 0.2
-    clip_ratio_high: 0.2
     clip_ratio_c: 3.0
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
     entropy_coeff: 0.0
@@ -45,13 +41,13 @@ actor_rollout_ref:
     shuffle: False
     ulysses_sequence_parallel_size: 1 # sp size
     checkpoint:
-      contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
+      contents: ['model', 'optimizer', 'extra']
     optim:
       lr: 1e-6
-      lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
-      min_lr_ratio: null   # only useful for warmup with cosine
-      warmup_style: constant  # select from constant/cosine
-      total_training_steps: -1  # must be override by program
+      # lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
+      # min_lr_ratio: null   # only useful for warmup with cosine
+      # warmup_style: constant  # select from constant/cosine
+      # total_training_steps: -1  # must be override by program
     fsdp_config:
       wrap_policy:
         # transformer_layer_cls_to_wrap: None
@@ -74,6 +70,7 @@ actor_rollout_ref:
     name: sglang_async
     prompt_length: ${data.max_prompt_length}  # not use for opensource
     response_length: ${data.max_response_length}
+    max_model_len: null
     # for vllm rollout
     dtype: bfloat16 # should align with FSDP
     temperature: ${.sampling_params.temperature} # this is currently ignored
@@ -93,7 +90,7 @@ actor_rollout_ref:
     # for hf rollout
     do_sample: True
     # number of responses (i.e. num sample times)
-    n: 2
+    n: 1
     multi_turn: True
     max_turns: 3
     plugin_browser: False
@@ -116,10 +113,10 @@ critic:
   strategy: fsdp
   optim:
     lr: 1e-5
-    lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
-    min_lr_ratio: null   # only useful for warmup with cosine
-    warmup_style: constant  # select from constant/cosine
-    total_training_steps: -1  # must be override by program
+    # lr_warmup_steps_ratio: 0.  # the total steps will be injected during runtime
+    # min_lr_ratio: null   # only useful for warmup with cosine
+    # warmup_style: constant  # select from constant/cosine
+    # total_training_steps: -1  # must be override by program
   model:
     path: Qwen/Qwen2.5-7B
     tokenizer_path: ${actor_rollout_ref.model.path}
@@ -148,7 +145,7 @@ critic:
   grad_clip: 1.0
   cliprange_value: 0.5
   checkpoint:
-    contents: ['model', 'optimizer', 'extra']  # with 'hf_model' you can save whole model as hf format, now only use sharded model checkpoint to save space
+    contents: ['model', 'optimizer', 'extra']
 
 reward_model:
   enable: False
@@ -180,8 +177,8 @@ trainer:
   test_freq: -1
   critic_warmup: 0
   default_hdfs_dir: null
-  remove_previous_ckpt_in_save: False
-  del_local_ckpt_after_load: False
+  remove_previous_ckpt_in_save: True
+  del_local_ckpt_after_load: True
   default_local_dir: /workspace/gsm8k/ckpt/${trainer.project_name}/${trainer.experiment_name}
   val_before_train: False
   balance_batch: False
