@@ -103,7 +103,7 @@ def _post_process_outputs(tokenizer, output):
 def get_tool_call_parser_type(tokenizer: PreTrainedTokenizer) -> str:
     for parser_type, parser_cls in FunctionCallParser.ToolCallParserEnum.items():
         parser = parser_cls()
-        if parser.bot_token in tokenizer.special_tokens_map:
+        if parser.bot_token in tokenizer.get_vocab() and (parser.eot_token == '' or parser.eot_token in tokenizer.get_vocab()):
             return parser_type
     else:
         raise ValueError(f"No tool call parser found for tokenizer {tokenizer}")
