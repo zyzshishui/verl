@@ -468,7 +468,7 @@ class AsyncSGLangRollout(BaseRollout):
                         spaces_between_special_tokens=True,
                     )
                 # users can customize different sampling_params at different run
-                with self.update_sampling_params(n=1, **kwargs):
+                with self.update_sampling_params(**kwargs):
                     output = await self._engine.async_generate(
                         prompt=generation_prompt,
                         sampling_params=self.sampling_params,
@@ -477,38 +477,44 @@ class AsyncSGLangRollout(BaseRollout):
                     
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
-                if self._function_call_parser and self._function_call_parser.has_tool_call(content):
-                    finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
-                    _req.state = AsyncRolloutRequestStateEnum.TOOL_CALLING
-                    try:
-                        normed_content, tool_calls = self._function_call_parser.parse_non_stream(content)
-                    except JSONDecodeError as e:
-                        logger.warning(f"Failed to parse tool calls from content: {content}")
-                        normed_content = content
-                        tool_calls = []
-                    parsed_tool_calls = [
-                        OpenAIFunctionToolCall(
-                            id=str(tool_call.tool_index), 
-                            function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
-                        ) for tool_call in tool_calls
-                    ]
-                    _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
-                else:
-                    _req.add_assistant_message(self.tokenizer, content)
-                    # Calculate the reward for each tool
-                    async def calc_reward_and_release_fn(name: str, tool: BaseTool):
-                        reward = await tool.calc_reward(_req.request_id)
-                        await tool.release(_req.request_id)
-                        return name, reward
-
-                    tool_reward_tasks = [
-                        calc_reward_and_release_fn(name, tool)
-                        for name, tool in self._tool_map.items()
-                    ]
-                    tool_reward_scores = await asyncio.gather(*tool_reward_tasks)
-                    tool_reward_scores = dict(tool_reward_scores)
-                    _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
+                if finish_reason_type == FinishReasonTypeEnum.LENGTH:
+                    _req.add_assistant_message(self.tokenizer, content, alreadyover_long=True)
                     break
+                else:
+                    if self._function_call_parser and self._function_call_parser.has_tool_call(content):
+                        finish_reason_type = FinishReasonTypeEnum.TOOL_CALL
+                        _req.state = AsyncRolloutRequestStateEnum.TOOL_CALLING
+                        try:
+                            normed_content, tool_calls = self._function_call_parser.parse_non_stream(content)
+                        except JSONDecodeError as e:
+                            logger.warning(f"Failed to parse tool calls from content: {content}")
+                            normed_content = content
+                            tool_calls = []
+                        parsed_tool_calls = [
+                            OpenAIFunctionToolCall(
+                                id=str(tool_call.tool_index), 
+                                function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
+                            ) for tool_call in tool_calls
+                        ]
+                        _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
+                    else:
+                        _req.add_assistant_message(self.tokenizer, content)
+                        break
+
+        # Calculate the reward for each tool
+        async def calc_reward_and_release_fn(name: str, tool: BaseTool):
+            reward = await tool.calc_reward(_req.request_id)
+            await tool.release(_req.request_id)
+            return name, reward
+
+        tool_reward_tasks = [
+            calc_reward_and_release_fn(name, tool)
+            for name, tool in self._tool_map.items()
+        ]
+        tool_reward_scores = await asyncio.gather(*tool_reward_tasks)
+        tool_reward_scores = dict(tool_reward_scores)
+        _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
+
         return _req
     
     @torch.no_grad()
