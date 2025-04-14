@@ -468,7 +468,7 @@ class AsyncSGLangRollout(BaseRollout):
                         spaces_between_special_tokens=True,
                     )
                 # users can customize different sampling_params at different run
-                with self.update_sampling_params(n=1, **kwargs):
+                with self.update_sampling_params(**kwargs):
                     output = await self._engine.async_generate(
                         prompt=generation_prompt,
                         sampling_params=self.sampling_params,
