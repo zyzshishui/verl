@@ -234,8 +234,9 @@ class RLHFDataset(Dataset):
 
         # add index for each prompt
         index = row_dict.get("extra_info", {}).get("index", 0)
+        tools_kwargs = row_dict.get("extra_info", {}).get("tools_kwargs", {})
         row_dict["index"] = index
-
+        row_dict["tools_kwargs"] = tools_kwargs
         return row_dict
 
     def __getstate__(self):

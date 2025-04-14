@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import List, Optional, Literal, Dict
+from typing import List, Optional, Literal, Dict, Any
 
 import torch
 from pydantic import BaseModel
@@ -49,13 +49,21 @@ class AsyncRolloutRequest(BaseModel):
     state: AsyncRolloutRequestStateEnum
     messages: List[Message]
     tools: Optional[List[OpenAIFunctionToolSchema]] = None
+    tools_kwargs: Dict[str, Any] = {}
     input_ids: List[int]
     prompt_ids: List[int]
     response_ids: List[int]
     attention_mask: List[int]
+    prompt_attention_mask: List[int]
+    response_attention_mask: List[int]
     position_ids: List[int]
+    prompt_position_ids: List[int]
+    response_position_ids: List[int]
     loss_mask: List[int]
+    prompt_loss_mask: List[int]
+    response_loss_mask: List[int]
     reward_scores: Dict[str, float]
+    max_response_len: int = 8192
     max_model_len: int = 32768
 
     format_config: dict = {
@@ -175,18 +183,20 @@ class AsyncRolloutRequest(BaseModel):
             self.attention_mask.append(1)
             self.position_ids.append(self.position_ids[-1] + 1)
             self.loss_mask.append(0)
-            self.truncate_output_ids(tokenizer)
         elif finish_reason_type == FinishReasonTypeEnum.LENGTH:
             pass
         else:
             raise ValueError(f"Unsupported finalize finish reason type: {finish_reason_type}")
+        self.truncate_output_ids(tokenizer)
         assert len(self.input_ids) == len(self.attention_mask) == len(self.position_ids) == len(self.loss_mask), \
             f"Request {self.request_id} has different length of {len(self.input_ids)=}, {len(self.attention_mask)=}, {len(self.position_ids)=}, {len(self.loss_mask)=}"
 
     def truncate_output_ids(self, tokenizer: PreTrainedTokenizer) -> None:
-        if len(self.input_ids) > self.max_model_len:
-            self.input_ids = self.input_ids[:self.max_model_len]
-            self.attention_mask = self.attention_mask[:self.max_model_len]
-            self.position_ids = self.position_ids[:self.max_model_len]
-            self.loss_mask = self.loss_mask[:self.max_model_len]
-            self.response_ids = self.input_ids[len(self.prompt_ids):]
+        self.input_ids = self.input_ids[:self.max_model_len]
+        self.attention_mask = self.attention_mask[:self.max_model_len]
+        self.position_ids = self.position_ids[:self.max_model_len]
+        self.loss_mask = self.loss_mask[:self.max_model_len]
+        self.response_ids = self.input_ids[len(self.prompt_ids):][:self.max_response_len]
+        self.response_attention_mask = self.attention_mask[len(self.prompt_attention_mask):][:self.max_response_len]
+        self.response_position_ids = self.position_ids[len(self.prompt_position_ids):][:self.max_response_len]
+        self.response_loss_mask = self.loss_mask[len(self.prompt_loss_mask):][:self.max_response_len]

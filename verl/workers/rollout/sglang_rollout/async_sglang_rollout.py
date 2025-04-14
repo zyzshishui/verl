@@ -136,7 +136,6 @@ class AsyncSGLangRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
-        self.max_turns = getattr(config, "max_turns", 1)
         
         tool_list = None
         if config.get("tool_kwargs") and config.tool_kwargs.get("tools_config_file", None) is not None:
@@ -182,7 +181,8 @@ class AsyncSGLangRollout(BaseRollout):
             self._tool_schemas = [tool.get_openai_tool_schema().model_dump() for tool in tool_list]
             self._tool_map = {tool.name: tool for tool in tool_list}
             self._tool_call_parser_type = get_tool_call_parser_type(tokenizer)
-            self._sgl_tools = self._tool_schemas
+            self._sgl_tools = [Tool.model_validate(tool_schema) for tool_schema in self._tool_schemas]
+            # print(f"{self._sgl_tools=}\n{type(self._sgl_tools[0])=}")
             self._function_call_parser = FunctionCallParser(
                     self._sgl_tools, 
                     self._tool_call_parser_type,
@@ -217,6 +217,9 @@ class AsyncSGLangRollout(BaseRollout):
             f"max_model_len should be greater than total sequence length (prompt_length + response_length): {self.config.max_model_len} >= {self.config.prompt_length} + {self.config.response_length}"
         assert (model_hf_config.max_position_embeddings >= self.config.max_model_len), \
             "model context length should be greater than total sequence length"
+        # currently max_turns stand for max number of tool calls
+        if self.config.get("max_turns", None) is None:
+            self.config.max_turns = self.config.max_model_len // 3
 
         tp_size = tensor_parallel_size
         world_size = int(os.getenv("WORLD_SIZE", "-1"))
@@ -420,25 +423,32 @@ class AsyncSGLangRollout(BaseRollout):
 
         return DataProto(batch=batch)
     
-    async def _async_rollout_a_request(self, req: AsyncRolloutRequest, do_sample: bool = True, **kwargs) -> AsyncRolloutRequest:
+    async def _async_rollout_a_request(self, req: AsyncRolloutRequest, do_sample: bool = True, is_validate: bool = False, **kwargs) -> AsyncRolloutRequest:
         assert self._tp_rank == 0, "only the master process can call this function"
         _req = deepcopy(req)
         finish_reason_type = None
         output = None
         
         current_turns = 0
-        while current_turns < self.max_turns:
-            current_turns += 1
-            
+        while current_turns < self.config.max_turns:
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
-                await asyncio.gather(*[tool.create(_req.request_id) for tool in self._tool_map.values()])
+                if _req.tools is not None:
+                    tool_creation_coroutines = []
+                    for tool_schema in _req.tools:
+                        tool = self._tool_map[tool_schema.function.name]
+                        create_kwargs = _req.tools_kwargs[tool.name].get("create_kwargs", {})
+                        tool_creation_coroutines.append(tool.create(_req.request_id, **create_kwargs))
+                    await asyncio.gather(*tool_creation_coroutines)
                 _req.state = AsyncRolloutRequestStateEnum.RUNNING
             elif _req.state == AsyncRolloutRequestStateEnum.TOOL_CALLING:
                 if _req.messages[-1].tool_calls is not None:
                     parsed_tool_calls = _req.messages[-1].tool_calls
                     tool_call_results = await asyncio.gather(*[
-                        self._tool_map[tool_call.function.name].execute(_req.request_id, tool_call.function.arguments)
-                        for tool_call in parsed_tool_calls
+                        self._tool_map[tool_call.function.name].execute(
+                            _req.request_id, 
+                            tool_call.function.arguments,
+                            **_req.tools_kwargs[tool_call.function.name].get("execute_kwargs", {})
+                        ) for tool_call in parsed_tool_calls
                     ])
                     for tool_call, (resp, reward, metrics) in zip(parsed_tool_calls, tool_call_results):
                         _req.add_tool_response_message(self.tokenizer, resp)
@@ -467,6 +477,16 @@ class AsyncSGLangRollout(BaseRollout):
                         skip_special_tokens=True,
                         spaces_between_special_tokens=True,
                     )
+                elif is_validate:
+                    # TODO: try **
+                    kwargs = {
+                        'top_k': self.config.val_kwargs.top_k,
+                        'top_p': self.config.val_kwargs.top_p,
+                        'temperature': self.config.val_kwargs.temperature,
+                        'n': 1,  # if validate, already repeat in ray_trainer
+                    }
+                if 'n' not in kwargs or kwargs['n'] > 1:  # group size is supported in preprocess
+                    kwargs["n"] = 1
                 # users can customize different sampling_params at different run
                 with self.update_sampling_params(**kwargs):
                     output = await self._engine.async_generate(
@@ -477,6 +497,7 @@ class AsyncSGLangRollout(BaseRollout):
                     
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
+                current_turns += 1
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
                     _req.add_assistant_message(self.tokenizer, content, alreadyover_long=True)
                     break
@@ -487,9 +508,16 @@ class AsyncSGLangRollout(BaseRollout):
                         try:
                             normed_content, tool_calls = self._function_call_parser.parse_non_stream(content)
                         except JSONDecodeError as e:
-                            logger.warning(f"Failed to parse tool calls from content: {content}")
+                            logger.warning(f"Failed to parse tool calls from content: {content}, JSONDecodeError: {e}")
                             normed_content = content
                             tool_calls = []
+                            # raise e
+                        except AttributeError as e:
+                            logger.warning(f"Failed to parse tool calls from content: {content}, AttributeError: {e}")
+                            normed_content = content
+                            tool_calls = []
+                            # raise e
+                        print(f"parsed {tool_calls=}")
                         parsed_tool_calls = [
                             OpenAIFunctionToolCall(
                                 id=str(tool_call.tool_index), 
@@ -501,10 +529,12 @@ class AsyncSGLangRollout(BaseRollout):
                         _req.add_assistant_message(self.tokenizer, content)
                         break
 
+        if current_turns >= self.config.max_turns:
+            finish_reason_type = FinishReasonTypeEnum.STOP
         # Calculate the reward for each tool
         async def calc_reward_and_release_fn(name: str, tool: BaseTool):
-            reward = await tool.calc_reward(_req.request_id)
-            await tool.release(_req.request_id)
+            reward = await tool.calc_reward(_req.request_id, **_req.tools_kwargs[name].get("calc_reward_kwargs", {}))
+            await tool.release(_req.request_id, **_req.tools_kwargs[name].get("release_kwargs", {}))
             return name, reward
 
         tool_reward_tasks = [
@@ -525,7 +555,10 @@ class AsyncSGLangRollout(BaseRollout):
             loop = asyncio.get_event_loop()
             output_req_list =  loop.run_until_complete(
                 asyncio.gather(
-                    *[self._async_rollout_a_request(req, prompts.meta_info.get("do_sample", True), **kwargs) 
+                    *[self._async_rollout_a_request(
+                        req, prompts.meta_info.get("do_sample", True), 
+                        prompts.meta_info.get("validate", False), 
+                        **kwargs) 
                     for req in req_list],
                 )
             )
@@ -540,7 +573,11 @@ class AsyncSGLangRollout(BaseRollout):
             src=self._device_mesh_cpu["tp"].mesh[0].item(),
         )
         # Construct the batch data
-        input_ids, prompt_ids, response_ids, attention_mask, position_ids, loss_mask, messages = [], [], [], [], [], [], []
+        prompt_ids, response_ids = [], []
+        prompt_attention_mask, response_attention_mask = [], []
+        prompt_position_ids, response_position_ids = [], []
+        prompt_loss_mask, response_loss_mask = [], []
+        messages = []
         # reward_scores = {tool_name: [] for tool_name in self._tool_map.keys()}
         reward_scores = []
         for req in sorted_output_req_list:
@@ -549,25 +586,51 @@ class AsyncSGLangRollout(BaseRollout):
                 f"Request {req.request_id} has different length of {len(req.input_ids)=}, {len(req.attention_mask)=}, {len(req.position_ids)=}, {len(req.loss_mask)=}"
             assert len(req.input_ids) <= self.config.max_model_len, \
                 f"Request {req.request_id} has input_ids length {len(req.input_ids)} greater than max_model_len {self.config.max_model_len},\n{self.tokenizer.decode(req.input_ids)=},\n{self.tokenizer.decode(req.prompt_ids)=},\n{self.tokenizer.decode(req.response_ids)=},\n{req.messages=},\n{req.max_model_len=}"
-            input_ids.append(torch.tensor(req.input_ids))
-            attention_mask.append(torch.tensor(req.attention_mask))
-            position_ids.append(torch.tensor(req.position_ids))
-            loss_mask.append(torch.tensor(req.loss_mask))
-            prompt_ids.append(torch.tensor(req.prompt_ids))
-            response_ids.append(torch.tensor(req.response_ids))
-            messages.append(req.messages)
+            prompt_ids.append(torch.tensor(req.prompt_ids, dtype=torch.int))
+            response_ids.append(torch.tensor(req.response_ids, dtype=torch.int))
+            if len(req.response_ids) > self.config.response_length:
+                print(f"{req.request_id=} has response_ids length {len(req.response_ids)} greater than max_response_len {self.config.response_length},\n{req=}")
+            prompt_attention_mask.append(torch.tensor(req.prompt_attention_mask, dtype=torch.int))
+            response_attention_mask.append(torch.tensor(req.response_attention_mask, dtype=torch.int))
+            prompt_position_ids.append(torch.tensor(req.prompt_position_ids, dtype=torch.int))
+            response_position_ids.append(torch.tensor(req.response_position_ids, dtype=torch.int))
+            prompt_loss_mask.append(torch.tensor(req.prompt_loss_mask, dtype=torch.int))
+            response_loss_mask.append(torch.tensor(req.response_loss_mask, dtype=torch.int))
+            messages.append({"messages": req.messages})
             reward_scores.append(req.reward_scores)
             # for tool_name, score in req.reward_scores.items():
             #     reward_scores[tool_name].append(score)
 
-        input_ids = pad_sequence(input_ids, batch_first=True, padding_value=self.pad_token_id)
         prompt_ids = pad_sequence(prompt_ids, batch_first=True, padding_value=self.pad_token_id)
+        if prompt_ids.shape[1] < self.config.prompt_length:
+            prompt_ids = pad_sequence_to_length(prompt_ids, self.config.prompt_length, self.pad_token_id, left_pad=True)
         response_ids = pad_sequence(response_ids, batch_first=True, padding_value=self.pad_token_id)
-        attention_mask = pad_sequence(attention_mask, batch_first=True, padding_value=0)
-        position_ids = pad_sequence(position_ids, batch_first=True, padding_value=0)
-        loss_mask = pad_sequence(loss_mask, batch_first=True, padding_value=0)
+        if response_ids.shape[1] < self.config.response_length:
+            response_ids = pad_sequence_to_length(response_ids, self.config.response_length, self.pad_token_id)
+        prompt_attention_mask = pad_sequence(prompt_attention_mask, batch_first=True, padding_value=0)
+        if prompt_attention_mask.shape[1] < self.config.prompt_length:
+            prompt_attention_mask = pad_sequence_to_length(prompt_attention_mask, self.config.prompt_length, 0, left_pad=True)
+        response_attention_mask = pad_sequence(response_attention_mask, batch_first=True, padding_value=0)
+        if response_attention_mask.shape[1] < self.config.response_length:
+            response_attention_mask = pad_sequence_to_length(response_attention_mask, self.config.response_length, 0)
+        prompt_position_ids = pad_sequence(prompt_position_ids, batch_first=True, padding_value=0)
+        if prompt_position_ids.shape[1] < self.config.prompt_length:
+            prompt_position_ids = pad_sequence_to_length(prompt_position_ids, self.config.prompt_length, 0, left_pad=True)
+        response_position_ids = pad_sequence(response_position_ids, batch_first=True, padding_value=0)
+        if response_position_ids.shape[1] < self.config.response_length:
+            response_position_ids = pad_sequence_to_length(response_position_ids, self.config.response_length, 0)
+        prompt_loss_mask = pad_sequence(prompt_loss_mask, batch_first=True, padding_value=0)
+        if prompt_loss_mask.shape[1] < self.config.prompt_length:
+            prompt_loss_mask = pad_sequence_to_length(prompt_loss_mask, self.config.prompt_length, 0, left_pad=True)
+        response_loss_mask = pad_sequence(response_loss_mask, batch_first=True, padding_value=0)
+        if response_loss_mask.shape[1] < self.config.response_length:
+            response_loss_mask = pad_sequence_to_length(response_loss_mask, self.config.response_length, 0)
         # reward_scores = {tool_name: torch.tensor(scores) for tool_name, scores in reward_scores.items()}
-        print(f"{reward_scores=}")
+        # print(f"{reward_scores=}")
+        input_ids = torch.cat((prompt_ids, response_ids), dim=-1)
+        attention_mask = torch.cat((prompt_attention_mask, response_attention_mask), dim=-1)
+        position_ids = torch.cat((prompt_position_ids, response_position_ids), dim=-1)
+        loss_mask = torch.cat((prompt_loss_mask, response_loss_mask), dim=-1)
         # print(f"{list(reward_scores.values())=}")
         # if len(list(reward_scores.values())) > 0:
         #     reward_scores_tensor = torch.stack(list(reward_scores.values()), dim=1)
@@ -576,7 +639,10 @@ class AsyncSGLangRollout(BaseRollout):
         #     reward_scores_tensor = torch.zeros((len(req_list), 1))
         #     tool_names = [["dummy_tool_name",]] * len(req_list)
         # print(f"{reward_scores_tensor=}")
+        # print(f"{prompt_ids.shape=}, {response_ids.shape=}, {input_ids.shape=}, {attention_mask.shape=}, {position_ids.shape=}, {loss_mask.shape=}, {len(reward_scores)=}, {len(sorted_output_req_list)=}, {len(messages)=}")
         
+        if self._tp_rank == 0:
+            print(f"examine first request:\n{sorted_output_req_list[0].messages=}\n{self.tokenizer.decode(sorted_output_req_list[0].input_ids)=}")
         # Construct the batch data
         batch = TensorDict(
             {
@@ -591,7 +657,7 @@ class AsyncSGLangRollout(BaseRollout):
             batch_size=len(sorted_output_req_list)
         )
 
-        return DataProto(batch=batch, non_tensor_batch={"messages": np.array(messages), "reward_scores": np.array(reward_scores).reshape(-1, 1)})
+        return DataProto(batch=batch, non_tensor_batch={"messages": np.array(messages), "reward_scores": np.array(reward_scores)})
     
     def _preprocess_prompt_to_async_rollout_requests(self, prompts: DataProto, n: int) -> List[AsyncRolloutRequest]:
         assert 'raw_prompt' in prompts.non_tensor_batch, "need data.return_raw_chat=True, due to no official way do parse_messages"
@@ -610,10 +676,21 @@ class AsyncSGLangRollout(BaseRollout):
                     _input_ids = input_data['input_ids'][0].tolist()
                     _attention_mask = input_data['attention_mask'][0].tolist()
                     _position_ids = compute_position_id_with_mask(input_data['attention_mask'][0]).tolist()
+                    _tools_kwargs = prompts.non_tensor_batch['tools_kwargs'][data_idx]
+                    _tool_schemas = []
+                    for k in _tools_kwargs.keys():
+                        _tool_schemas.append(self._tool_map[k].get_openai_tool_schema())
+                    if len(_input_ids) > self.config.prompt_length:
+                        logger.warning(f"Prompt {data_idx} has length {len(_input_ids)} greater than max_prompt_len {self.config.prompt_length}")
+                        _input_ids = _input_ids[:self.config.prompt_length]
+                        _attention_mask = _attention_mask[:self.config.prompt_length]
+                        _position_ids = _position_ids[:self.config.prompt_length]
                 else:
                     _input_ids = _pre_process_inputs(self.pad_token_id, prompts.batch['input_ids'][data_idx])
                     _attention_mask = _pre_process_inputs(0, prompts.batch['attention_mask'][data_idx])
                     _position_ids = compute_position_id_with_mask(torch.tensor(_attention_mask)).tolist()
+                    _tool_schemas = []
+                    _tools_kwargs = {}
                 
                 req = AsyncRolloutRequest(
                     batch_data_id=data_idx,
@@ -621,15 +698,23 @@ class AsyncSGLangRollout(BaseRollout):
                     request_id=str(uuid4()),
                     state=AsyncRolloutRequestStateEnum.PENDING,
                     messages=[Message.model_validate(msg) for msg in raw_prompt],
-                    tools=self._tool_schemas,
+                    tools=_tool_schemas,
+                    tools_kwargs=_tools_kwargs,
                     input_ids=_input_ids,
                     prompt_ids=_input_ids,
                     response_ids=[],
                     attention_mask=_attention_mask,
+                    prompt_attention_mask=_attention_mask,
+                    response_attention_mask=[],
                     position_ids=_position_ids,
+                    prompt_position_ids=_position_ids,
+                    response_position_ids=[],
                     loss_mask=[0] * len(_input_ids),
+                    prompt_loss_mask=[0] * len(_input_ids),
+                    response_loss_mask=[],
                     reward_scores={},
-                    max_model_len=self.config.max_model_len,
+                    max_response_len=self.config.response_length,
+                    max_model_len=min(self.config.max_model_len, self.config.prompt_length + self.config.response_length)
                 )
                 assert len(req.input_ids) == len(req.attention_mask) == len(req.position_ids) == len(req.loss_mask), \
                     f"Request {req.request_id} has different length of {len(req.input_ids)=}, {len(req.attention_mask)=}, {len(req.position_ids)=}, {len(req.loss_mask)=},\n{self.pad_token_id=},\n{req.input_ids=},\n{req.attention_mask=},\n{req.position_ids=},\n{req.loss_mask=}"

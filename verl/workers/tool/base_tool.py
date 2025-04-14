@@ -21,7 +21,7 @@ class BaseTool(object):
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    async def create(self, instance_id: Optional[str] = None) -> str:
+    async def create(self, instance_id: Optional[str] = None, **kwargs) -> str:
         """Create a tool instance.
 
         Args:
@@ -35,7 +35,7 @@ class BaseTool(object):
         else:
             return instance_id
     
-    async def execute(self, instance_id: str, parameters: str) -> Tuple[str, float, dict]:
+    async def execute(self, instance_id: str, parameters: str, **kwargs) -> Tuple[str, float, dict]:
         """Execute the tool.
 
         Args:
@@ -49,7 +49,7 @@ class BaseTool(object):
         """
         return "Updated the tool state.", 0.0, {}
 
-    async def calc_reward(self, instance_id: str) -> float:
+    async def calc_reward(self, instance_id: str, **kwargs) -> float:
         """Calculate the reward of the tool.
 
         Args:
@@ -60,7 +60,7 @@ class BaseTool(object):
         """
         return 0.0
     
-    async def release(self, instance_id: str) -> None:
+    async def release(self, instance_id: str, **kwargs) -> None:
         """Release the tool instance.
 
         Args:
