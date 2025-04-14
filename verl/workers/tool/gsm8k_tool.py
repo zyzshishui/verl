@@ -25,16 +25,12 @@ class Gsm8kTool(BaseTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "response": {
+                        "answer": {
                             "type": "string",
-                            "description": "The response to the question",
-                        },
-                        "ground_truth": {
-                            "type": "string",
-                            "description": "The ground truth of the question",
+                            "description": "The answer to the question",
                         },
                     },
-                    "required": ["response", "ground_truth"],
+                    "required": ["answer"],
                 },
             }
         })
@@ -45,24 +41,39 @@ class Gsm8kTool(BaseTool):
     def get_openai_tool_schema(self) -> OpenAIFunctionToolSchema:
         return self.tool_schema
     
-    async def create(self, instance_id: Optional[str] = None) -> str:
+    async def create(self, instance_id: Optional[str] = None, ground_truth: Optional[str] = None, **kwargs) -> str:
         if instance_id is None:
             instance_id = str(uuid4())
         self._instance_dict[instance_id] = {
             "response": "",
-            "ground_truth": "",
+            "ground_truth": ground_truth,
             "reward": 0.0,
         }
         return instance_id
     
-    async def execute(self, instance_id: str, parameters: str) -> Tuple[str, float, dict]:
-        parameters = json.loads(parameters)
-        self._instance_dict[instance_id]["response"] = parameters.get("response", "")
-        self._instance_dict[instance_id]["ground_truth"] = parameters.get("ground_truth", "")
-        return "Updated the response and ground truth in the query.", 0.0, {}
+    async def execute(self, instance_id: str, parameters: str, **kwargs) -> Tuple[str, float, dict]:
+        try:
+            _parameters = json.loads(parameters)
+        except json.JSONDecodeError as e:
+            print(f"Failed to parse parameters: {parameters}, JSONDecodeError: {e}")
+            _parameters = {}
+        print(f"{_parameters=}")
+        if isinstance(_parameters, dict):
+            answer = _parameters.get("answer", "")
+            if not isinstance(answer, str):
+                answer = str(answer)
+        else:
+            answer = ""
+        self._instance_dict[instance_id]["response"] = "#### " + answer
+        reward = await self.calc_reward(instance_id)
+        # penalty for non improved answer submission
+        tool_reward = 0.0 if reward > self._instance_dict[instance_id]["reward"] else -0.05
+        # update the reward
+        self._instance_dict[instance_id]["reward"] = reward
+        return f"Current answer {reward=}", tool_reward, {}
     
-    async def calc_reward(self, instance_id: str) -> float:
+    async def calc_reward(self, instance_id: str, **kwargs) -> float:
         return gsm8k.compute_score(self._instance_dict[instance_id]["response"], self._instance_dict[instance_id]["ground_truth"])
     
-    async def release(self, instance_id: str) -> None:
+    async def release(self, instance_id: str, **kwargs) -> None:
         del self._instance_dict[instance_id]

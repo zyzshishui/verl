@@ -843,6 +843,8 @@ class RayPPOTrainer(object):
                     non_tensor_batch_keys.extend(['multi_modal_data', 'multi_modal_inputs'])
                 if 'raw_prompt' in batch.non_tensor_batch.keys():
                     non_tensor_batch_keys.append('raw_prompt')
+                if 'tools_kwargs' in batch.non_tensor_batch.keys():
+                    non_tensor_batch_keys.append('tools_kwargs')
                 gen_batch = batch.pop(
                     batch_keys=['input_ids', 'attention_mask', 'position_ids'],
                     non_tensor_batch_keys=non_tensor_batch_keys,
@@ -854,7 +856,7 @@ class RayPPOTrainer(object):
                     # generate a batch
                     with _timer('gen', timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                    print(f"gen_batch_output: {gen_batch_output}")
+                    # print(f"gen_batch_output: {gen_batch_output}")
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer('gen_max', timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)
