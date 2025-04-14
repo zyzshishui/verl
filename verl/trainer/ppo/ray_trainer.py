@@ -134,14 +134,19 @@ import torch
 from verl.utils.torch_functional import masked_mean
 
 
-def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty='kl'):
+def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, kl_penalty='kl', multi_turn=False):
     responses = data.batch['responses']
     response_length = responses.size(1)
     token_level_scores = data.batch['token_level_scores']
     batch_size = data.batch.batch_size[0]
-    attention_mask = data.batch['attention_mask']
-    response_mask = attention_mask[:, -response_length:]
-
+    
+    if multi_turn:
+        loss_mask = data.batch['loss_mask']
+        response_mask = loss_mask[:, -response_length:]
+    else:
+        attention_mask = data.batch['attention_mask']
+        response_mask = attention_mask[:, -response_length:]
+        
     # compute kl between ref_policy and current policy
     # When apply_kl_penalty, algorithm.use_kl_in_reward=True, so the reference model has been enabled.
     kld = core_algos.kl_penalty(data.batch['old_log_probs'], data.batch['ref_log_prob'],
@@ -886,7 +891,8 @@ class RayPPOTrainer(object):
                         if self.config.algorithm.use_kl_in_reward:
                             batch, kl_metrics = apply_kl_penalty(batch,
                                                                  kl_ctrl=self.kl_ctrl_in_reward,
-                                                                 kl_penalty=self.config.algorithm.kl_penalty)
+                                                                 kl_penalty=self.config.algorithm.kl_penalty,
+                                                                 multi_turn=self.config.actor_rollout_ref.rollout.get('multi_turn', False))
                             metrics.update(kl_metrics)
                         else:
                             batch.batch['token_level_rewards'] = batch.batch['token_level_scores']

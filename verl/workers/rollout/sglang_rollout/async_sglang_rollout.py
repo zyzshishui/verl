@@ -123,7 +123,6 @@ class AsyncSGLangRollout(BaseRollout):
         config: DictConfig,
         tokenizer,
         model_hf_config,
-        tool_list: Optional[List[BaseTool]] = None,
         **kwargs,
     ):
         """A SGLang rollout. It requires the module is supported by the SGLang.
@@ -137,11 +136,53 @@ class AsyncSGLangRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
+        self.max_turns = getattr(config, "max_turns", 1)
+        
+        tool_list = None
+        if config.get("tool_kwargs") and config.tool_kwargs.get("tools_config_file", None) is not None:
+            from omegaconf import OmegaConf
+            def initialize_tools(tools_config) -> List:
+                import sys
+                import importlib.util
+                from typing import List
+                from verl.workers.tool.data_model import OpenAIFunctionToolSchema
+
+                tool_list = []
+                
+                for tool_config in tools_config.tools:
+                    cls_name = tool_config.class_name
+                    module_name, class_name = cls_name.rsplit(".", 1)
+                    
+                    if module_name not in sys.modules:
+                        spec = importlib.util.find_spec(module_name)
+                        module = importlib.util.module_from_spec(spec)
+                        sys.modules[module_name] = module
+                        spec.loader.exec_module(module)
+                    else:
+                        module = sys.modules[module_name]
+                        
+                    tool_cls = getattr(module, class_name)
+                    
+                    tool_schema_dict = OmegaConf.to_container(tool_config.tool_schema, resolve=True)
+                    tool_schema = OpenAIFunctionToolSchema.parse_obj(tool_schema_dict)
+                    
+                    tool = tool_cls(
+                        config=OmegaConf.to_container(tool_config.config, resolve=True),
+                        tool_schema=tool_schema
+                    )
+                    tool_list.append(tool)
+                
+                return tool_list
+ 
+            tools_config_file = config.tool_kwargs.tools_config_file
+            tools_config = OmegaConf.load(tools_config_file)
+            tool_list = initialize_tools(tools_config)           
+
         if tool_list is not None:
-            self._tool_schemas = [tool.get_openai_tool_schema() for tool in tool_list]
+            self._tool_schemas = [tool.get_openai_tool_schema().model_dump() for tool in tool_list]
             self._tool_map = {tool.name: tool for tool in tool_list}
             self._tool_call_parser_type = get_tool_call_parser_type(tokenizer)
-            self._sgl_tools = [Tool.model_validate(tool) for tool in self._tool_schemas]
+            self._sgl_tools = self._tool_schemas
             self._function_call_parser = FunctionCallParser(
                     self._sgl_tools, 
                     self._tool_call_parser_type,
@@ -384,7 +425,11 @@ class AsyncSGLangRollout(BaseRollout):
         _req = deepcopy(req)
         finish_reason_type = None
         output = None
-        while True:
+        
+        current_turns = 0
+        while current_turns < self.max_turns:
+            current_turns += 1
+            
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 await asyncio.gather(*[tool.create(_req.request_id) for tool in self._tool_map.values()])
                 _req.state = AsyncRolloutRequestStateEnum.RUNNING
@@ -429,6 +474,7 @@ class AsyncSGLangRollout(BaseRollout):
                         sampling_params=self.sampling_params,
                         return_logprob=False,
                     )
+                    
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:
