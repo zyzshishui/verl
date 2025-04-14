@@ -136,6 +136,7 @@ class AsyncSGLangRollout(BaseRollout):
         """
         super().__init__()
         self.config = config
+        self.max_turns = getattr(config, "max_turns", 1)
         
         tool_list = None
         if config.get("tool_kwargs") and config.tool_kwargs.get("tools_config_file", None) is not None:
@@ -424,7 +425,11 @@ class AsyncSGLangRollout(BaseRollout):
         _req = deepcopy(req)
         finish_reason_type = None
         output = None
-        while True:
+        
+        current_turns = 0
+        while current_turns < self.max_turns:
+            current_turns += 1
+            
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
                 await asyncio.gather(*[tool.create(_req.request_id) for tool in self._tool_map.values()])
                 _req.state = AsyncRolloutRequestStateEnum.RUNNING
