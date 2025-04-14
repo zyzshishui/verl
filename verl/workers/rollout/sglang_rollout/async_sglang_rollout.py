@@ -468,15 +468,13 @@ class AsyncSGLangRollout(BaseRollout):
                         spaces_between_special_tokens=True,
                     )
                 # users can customize different sampling_params at different run
-                with self.update_sampling_params(**kwargs):
+                with self.update_sampling_params(n=1, **kwargs):
                     output = await self._engine.async_generate(
                         prompt=generation_prompt,
                         sampling_params=self.sampling_params,
                         return_logprob=False,
                     )
-                # TODO(yuzhen): support batch rollout
-                if isinstance(output, list):
-                    output = output[0]
+                    
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 if finish_reason_type == FinishReasonTypeEnum.LENGTH:

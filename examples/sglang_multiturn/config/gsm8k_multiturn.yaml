@@ -104,7 +104,7 @@ actor_rollout_ref:
       top_k: -1 # 0 for hf rollout, -1 for vllm rollout
       top_p: 1.0
       temperature: 0
-      n: 1
+      n: 2
       do_sample: False # default eager for validation
     tool_kwargs:
       tools_config_file: "examples/sglang_multiturn/config/tool_config/gsm8k_tool_config.yaml"
