@@ -9,10 +9,7 @@ tools:
         parameters:
           type: "object"
           properties:
-            response:
+            answer:
               type: "string"
-              description: "The model's response to the GSM8K math problem"
-            ground_truth:
-              type: "string"
-              description: "The ground truth answer to the GSM8K math problem"
-          required: ["response", "ground_truth"]
+              description: "The model's answer to the GSM8K math problem"
+          required: ["answer"]
