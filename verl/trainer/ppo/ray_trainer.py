@@ -803,9 +803,9 @@ class RayPPOTrainer(object):
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-                print(f"batch_dict: {batch_dict}")
+                # print(f"batch_dict: {batch_dict}")
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
-                print(f"DataProto.from_single_dict(batch_dict): {batch}")
+                # print(f"DataProto.from_single_dict(batch_dict): {batch}")
 
                 # pop those keys for generation
                 non_tensor_batch_keys = ['raw_prompt_ids']
@@ -819,7 +819,7 @@ class RayPPOTrainer(object):
                     batch_keys=['input_ids', 'attention_mask', 'position_ids'],
                     non_tensor_batch_keys=non_tensor_batch_keys,
                 )
-                print(f"gen_batch pop from batch: {gen_batch}")
+                # print(f"gen_batch pop from batch: {gen_batch}")
                 is_last_step = self.global_steps >= self.total_training_steps
 
                 with _timer('step', timing_raw):
