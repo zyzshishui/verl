@@ -538,6 +538,8 @@ class RayPPOTrainer(object):
                 non_tensor_batch_keys.extend(['multi_modal_data', 'multi_modal_inputs'])
             if 'raw_prompt' in test_batch.non_tensor_batch.keys():
                 non_tensor_batch_keys.append('raw_prompt')
+            if 'tools_kwargs' in test_batch.non_tensor_batch.keys():
+                non_tensor_batch_keys.append('tools_kwargs')
             test_gen_batch = test_batch.pop(
                 batch_keys=['input_ids', 'attention_mask', 'position_ids'],
                 non_tensor_batch_keys=non_tensor_batch_keys,

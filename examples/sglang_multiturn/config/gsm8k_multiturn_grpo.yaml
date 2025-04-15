@@ -3,7 +3,7 @@ data:
   train_files: /user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed/train.parquet
   val_files: /user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed/test.parquet
   prompt_key: prompt
-  max_prompt_length: 512
+  max_prompt_length: 1024
   max_response_length: 1024
   train_batch_size: 128
   val_batch_size: null # DEPRECATED: Validation datasets are sent to inference engines as a whole batch, which will schedule the memory themselves
@@ -70,7 +70,7 @@ actor_rollout_ref:
     ulysses_sequence_parallel_size: ${actor_rollout_ref.actor.ulysses_sequence_parallel_size} # sp size
   rollout:
     name: sglang_async
-    temperature: 1.0
+    temperature: 0.3
     top_k: -1 # 0 for hf rollout, -1 for vllm rollout
     top_p: 1
     use_fire_sampling: False # https://arxiv.org/abs/2410.21236
@@ -78,13 +78,13 @@ actor_rollout_ref:
     response_length: ${data.max_response_length}
     # for vllm rollout
     dtype: bfloat16 # should align with FSDP
-    gpu_memory_utilization: 0.8
+    gpu_memory_utilization: 0.9
     ignore_eos: False
     enforce_eager: True
     free_cache_engine: True
     load_format: dummy_dtensor
     tensor_model_parallel_size: 2
-    max_num_batched_tokens: 16384
+    max_num_batched_tokens: 24576
     max_model_len: null
     max_num_seqs: 1024
     log_prob_micro_batch_size: null # will be deprecated, use log_prob_micro_batch_size_per_gpu
@@ -101,9 +101,9 @@ actor_rollout_ref:
       # sampling parameters for validation
       top_k: -1 # 0 for hf rollout, -1 for vllm rollout
       top_p: 1.0
-      temperature: 0
-      n: 8
-      do_sample: False # default eager for validation
+      temperature: 0.7
+      n: 2
+      do_sample: True # default eager for validation
     multi_turn: True
     max_turns: 5
     tool_kwargs:

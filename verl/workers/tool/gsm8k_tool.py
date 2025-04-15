@@ -1,9 +1,12 @@
 import json
+import logging
 from typing import Optional, Tuple
 from uuid import uuid4
 from .base_tool import BaseTool
 from .data_model import OpenAIFunctionToolSchema, OpenAIFunctionParametersSchema, OpenAIFunctionParsedSchema
 from verl.utils.reward_score import gsm8k
+
+logger = logging.getLogger(__name__)
 
 
 class Gsm8kTool(BaseTool):
@@ -55,9 +58,9 @@ class Gsm8kTool(BaseTool):
         try:
             _parameters = json.loads(parameters)
         except json.JSONDecodeError as e:
-            print(f"Failed to parse parameters: {parameters}, JSONDecodeError: {e}")
+            logger.warning(f"Failed to parse parameters: {parameters}, JSONDecodeError: {e}")
             _parameters = {}
-        print(f"{_parameters=}")
+        # logger.debug(f"{_parameters=}")
         if isinstance(_parameters, dict):
             answer = _parameters.get("answer", "")
             if not isinstance(answer, str):
@@ -73,7 +76,7 @@ class Gsm8kTool(BaseTool):
         tool_reward = 0.0 if reward > self._instance_dict[instance_id]["reward"] else -0.05
         # update the reward
         self._instance_dict[instance_id]["reward"] = reward
-        return f"Current answer {reward=}", tool_reward, {}
+        return f"Current parsed {answer=} {reward=}", tool_reward, {}
     
     async def calc_reward(self, instance_id: str, **kwargs) -> float:
         return gsm8k.compute_score(
