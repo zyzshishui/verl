@@ -517,14 +517,20 @@ class AsyncSGLangRollout(BaseRollout):
                             normed_content = content
                             tool_calls = []
                             # raise e
-                        print(f"parsed {tool_calls=}")
+                        # print(f"parsed {tool_calls=}")
                         parsed_tool_calls = [
                             OpenAIFunctionToolCall(
                                 id=str(tool_call.tool_index), 
                                 function=OpenAIFunctionParsedSchema(name=tool_call.name, arguments=tool_call.parameters)
                             ) for tool_call in tool_calls
                         ]
-                        _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
+                        if len(parsed_tool_calls) > 0:
+                            _req.add_assistant_message(self.tokenizer, normed_content, tool_calls=parsed_tool_calls)
+                        else:
+                            _req.add_assistant_message(self.tokenizer, content)
+                            finish_reason_type = FinishReasonTypeEnum.STOP
+                            _req.state = AsyncRolloutRequestStateEnum.COMPLETED
+                            break
                     else:
                         _req.add_assistant_message(self.tokenizer, content)
                         break
@@ -550,14 +556,20 @@ class AsyncSGLangRollout(BaseRollout):
     @torch.no_grad()
     def generate_sequences_with_tools(self,  prompts: DataProto, **kwargs) -> DataProto:
         # Async rollout with tools support
+        do_sample = prompts.meta_info.get("do_sample", True)
+        is_validate = prompts.meta_info.get("validate", False)
         if self._tp_rank == 0:
-            req_list = self._preprocess_prompt_to_async_rollout_requests(prompts, self.config.n)
+            req_list = self._preprocess_prompt_to_async_rollout_requests(
+                    prompts, 
+                    n=1 if is_validate else self.config.n,
+                )
             loop = asyncio.get_event_loop()
             output_req_list =  loop.run_until_complete(
                 asyncio.gather(
                     *[self._async_rollout_a_request(
-                        req, prompts.meta_info.get("do_sample", True), 
-                        prompts.meta_info.get("validate", False), 
+                        req, 
+                        do_sample, 
+                        is_validate, 
                         **kwargs) 
                     for req in req_list],
                 )

@@ -17,6 +17,7 @@ import os
 from typing import List, Union, Optional
 import copy
 import pandas as pd
+import logging
 from collections import defaultdict
 
 import torch
@@ -26,6 +27,8 @@ from transformers import PreTrainedTokenizer, ProcessorMixin
 
 from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
+
+logger = logging.getLogger(__name__)
 
 
 def collate_fn(data_list: list[dict]) -> dict:
@@ -235,6 +238,8 @@ class RLHFDataset(Dataset):
         # add index for each prompt
         index = row_dict.get("extra_info", {}).get("index", 0)
         tools_kwargs = row_dict.get("extra_info", {}).get("tools_kwargs", {})
+        if not tools_kwargs:
+            logger.warning(f"tools_kwargs is empty for index {index}, data: {row_dict}")
         row_dict["index"] = index
         row_dict["tools_kwargs"] = tools_kwargs
         return row_dict
