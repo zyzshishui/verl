@@ -150,7 +150,7 @@ def apply_kl_penalty(data: DataProto, kl_ctrl: core_algos.AdaptiveKLController, 
     else:
         attention_mask = data.batch['attention_mask']
         response_mask = attention_mask[:, -response_length:]
-        
+
     # compute kl between ref_policy and current policy
     # When apply_kl_penalty, algorithm.use_kl_in_reward=True, so the reference model has been enabled.
     kld = core_algos.kl_penalty(data.batch['old_log_probs'], data.batch['ref_log_prob'],
@@ -424,25 +424,14 @@ class RayPPOTrainer(object):
             dataset_cls = RLHFDataset
 
         need_tools_kwargs = self.config.actor_rollout_ref.rollout.tool_kwargs.tools_config_file is not None
-        
         self.train_dataset = dataset_cls(
             data_files=self.config.data.train_files,
             tokenizer=self.tokenizer,
             processor=self.processor,
             config=self.config.data,
+            need_tools_kwargs=need_tools_kwargs
         )
 
-        self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
-                                         tokenizer=self.tokenizer,
-                                         processor=self.processor,
-                                         prompt_key=self.config.data.prompt_key,
-                                         image_key=self.config.data.get('image_key', 'images'),
-                                         max_prompt_length=self.config.data.max_prompt_length,
-                                         filter_prompts=True,
-                                         return_raw_chat=self.config.data.get('return_raw_chat', False),
-                                         truncation=self.config.data.get('truncation', 'error'),
-                                         filter_overlong_prompts=self.config.data.filter_overlong_prompts,
-                                         need_tools_kwargs=need_tools_kwargs)
         assert self.train_dataset.truncation == self.config.data.get(
             'truncation', 'error'
         ), f'dataset truncation {self.train_dataset.truncation} must be the same as config {self.config.data.get("truncation", "error")}'
@@ -852,9 +841,8 @@ class RayPPOTrainer(object):
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-                # print(f"batch_dict: {batch_dict}")
+
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
-                # print(f"DataProto.from_single_dict(batch_dict): {batch}")
 
                 # pop those keys for generation
                 non_tensor_batch_keys = ['raw_prompt_ids']
@@ -875,7 +863,7 @@ class RayPPOTrainer(object):
                     # generate a batch
                     with _timer('gen', timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-                    # print(f"gen_batch_output: {gen_batch_output}")
+
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer('gen_max', timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)

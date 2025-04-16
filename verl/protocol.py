@@ -286,7 +286,7 @@ class DataProto:
 
         if self.non_tensor_batch is not None:
             for key, val in self.non_tensor_batch.items():
-                assert isinstance(val, np.ndarray), f"{key} is not a numpy array, {type(val)=}"
+                assert isinstance(val, np.ndarray)
 
         if self.batch is not None and len(self.non_tensor_batch) != 0:
             # TODO: we can actually lift this restriction if needed

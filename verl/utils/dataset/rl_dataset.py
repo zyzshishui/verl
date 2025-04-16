@@ -17,7 +17,6 @@ import re
 from typing import List, Union, Optional
 import copy
 import datasets
-import logging
 from collections import defaultdict
 
 import torch
@@ -28,8 +27,6 @@ from omegaconf import ListConfig, DictConfig
 
 from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
-
-logger = logging.getLogger(__name__)
 
 
 def collate_fn(data_list: list[dict]) -> dict:

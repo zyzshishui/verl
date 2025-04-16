@@ -1,8 +1,9 @@
 data:
   tokenizer: null
-  train_files: /user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed/train.parquet
-  val_files: /user/longxiang1/data/gsm8k_verl_sgl_multi_turn_preprocessed/test.parquet
+  train_files: /root/data/gsm8k/train.parquet
+  val_files: /root/data/gsm8k/test.parquet
   prompt_key: prompt
+  reward_fn_key: data_source
   max_prompt_length: 1024
   max_response_length: 1024
   train_batch_size: 1024
@@ -17,7 +18,7 @@ data:
 actor_rollout_ref:
   hybrid_engine: True
   model:
-    path: /user/longxiang1/models/Qwen/Qwen2.5-0.5B-Instruct
+    path: Qwen/Qwen2.5-3B-Instruct
     external_lib: null
     override_config: { }
     enable_gradient_checkpointing: True
@@ -33,6 +34,7 @@ actor_rollout_ref:
     grad_clip: 1.0
     clip_ratio: 0.2
     clip_ratio_c: 3.0
+    loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
     entropy_coeff: 0
     use_kl_loss: True # True for GRPO
     use_torch_compile: True # False to disable torch compile
@@ -93,7 +95,7 @@ actor_rollout_ref:
     enable_chunked_prefill: True # may get higher throughput when set to True. When activated, Please increase max_num_batched_tokens or decrease max_model_len.
     # for hf rollout
     do_sample: True
-    n: 5
+    n: 4
     val_kwargs:
       # sampling parameters for validation
       top_k: -1 # 0 for hf rollout, -1 for vllm rollout
@@ -116,7 +118,7 @@ critic:
     warmup_style: constant  # select from constant/cosine
     total_training_steps: -1  # must be override by program
   model:
-    path: /user/longxiang1/models/Qwen/Qwen2.5-0.5B-Instruct
+    path: Qwen/Qwen2.5-0.5B-Instruct
     tokenizer_path: ${actor_rollout_ref.model.path}
     override_config: { }
     external_lib: ${actor_rollout_ref.model.external_lib}
@@ -169,7 +171,7 @@ trainer:
   logger: [ 'console', 'wandb' ]
   log_val_generations: 0
   nnodes: 1
-  n_gpus_per_node: 8
+  n_gpus_per_node: 4
   save_freq: -1 # -1 for no save
   # auto: find the last ckpt to resume. If can't find, start from scratch
   resume_mode: auto # or auto or resume_path if
@@ -180,4 +182,4 @@ trainer:
   default_hdfs_dir: null
   remove_previous_ckpt_in_save: True
   del_local_ckpt_after_load: True
-  default_local_dir: /user/longxiang1/checkpoints/${trainer.project_name}/${trainer.experiment_name}
+  default_local_dir: /root/checkpoints/${trainer.project_name}/${trainer.experiment_name}
