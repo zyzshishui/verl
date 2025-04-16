@@ -532,9 +532,16 @@ class ActorRolloutRefWorker(Worker):
 
             prompts = self.rollout_sharding_manager.preprocess_data(prompts)
             
-            from verl.workers.rollout.sglang_rollout import AsyncSGLangRollout
-            if isinstance(self.rollout, AsyncSGLangRollout) and hasattr(self.rollout, '_tool_schemas') and len(self.rollout._tool_schemas) > 0:
-                output = self.rollout.generate_sequences_with_tools(prompts=prompts)
+            if self.config.rollout.name == 'sglang_async':
+                from verl.workers.rollout.sglang_rollout import AsyncSGLangRollout
+                if (
+                    isinstance(self.rollout, AsyncSGLangRollout) 
+                    and hasattr(self.rollout, '_tool_schemas') 
+                    and len(self.rollout._tool_schemas) > 0
+                ):
+                    output = self.rollout.generate_sequences_with_tools(prompts=prompts)
+                else:
+                    output = self.rollout.generate_sequences(prompts=prompts)
             else:
                 output = self.rollout.generate_sequences(prompts=prompts)
             log_gpu_memory_usage('After rollout generation', logger=logger)
