@@ -68,7 +68,7 @@ actor_rollout_ref:
     ulysses_sequence_parallel_size: ${actor_rollout_ref.actor.ulysses_sequence_parallel_size} # sp size
   rollout:
     name: sglang_async
-    temperature: 0.3
+    temperature: 1.0
     top_k: -1 # 0 for hf rollout, -1 for vllm rollout
     top_p: 1
     use_fire_sampling: False # https://arxiv.org/abs/2410.21236
@@ -82,7 +82,7 @@ actor_rollout_ref:
     free_cache_engine: True
     load_format: dummy_dtensor
     tensor_model_parallel_size: 2
-    max_num_batched_tokens: 24576
+    max_num_batched_tokens: 61440
     max_model_len: null
     max_num_seqs: 1024
     log_prob_micro_batch_size: null # will be deprecated, use log_prob_micro_batch_size_per_gpu

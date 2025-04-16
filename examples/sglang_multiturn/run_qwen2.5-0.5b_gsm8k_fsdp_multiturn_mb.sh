@@ -18,5 +18,5 @@ python3 -m verl.trainer.main_ppo \
     --config-path=/user/longxiang1/workspace/verl/examples/sglang_multiturn/config \
     --config-name='gsm8k_multiturn_grpo' \
     actor_rollout_ref.model.path=/user/longxiang1/models/Qwen/Qwen2.5-0.5B-Instruct \
-    trainer.experiment_name='qwen2.5-0.5b_function_rm-gsm8k-sgl-multiturn'
+    trainer.experiment_name='qwen2.5-0.5b_function_rm-gsm8k-sgl-multiturn-temp1.0'
 
