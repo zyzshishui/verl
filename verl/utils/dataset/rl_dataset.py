@@ -92,7 +92,8 @@ class RLHFDataset(Dataset):
                  chat_template_func=None,
                  return_raw_chat=False,
                  truncation='error',
-                 filter_overlong_prompts=False):
+                 filter_overlong_prompts=False,
+                 need_tools_kwargs=False):
         """dataset for rlhf training
 
         Args:
@@ -127,6 +128,7 @@ class RLHFDataset(Dataset):
         self.chat_template_func = chat_template_func
         self.truncation = truncation
         self.filter_overlong_prompts = filter_overlong_prompts
+        self.need_tools_kwargs = need_tools_kwargs
 
         # whether to store the dataset in state_dict()
         # default not store
@@ -238,8 +240,8 @@ class RLHFDataset(Dataset):
         # add index for each prompt
         index = row_dict.get("extra_info", {}).get("index", 0)
         tools_kwargs = row_dict.get("extra_info", {}).get("tools_kwargs", {})
-        if not tools_kwargs:
-            logger.warning(f"tools_kwargs is empty for index {index}, data: {row_dict}")
+        if self.need_tools_kwargs and not tools_kwargs:
+            logger.warning(f"tools_kwargs is empty for index {index}, data source: {row_dict['data_source']}")
         row_dict["index"] = index
         row_dict["tools_kwargs"] = tools_kwargs
         return row_dict

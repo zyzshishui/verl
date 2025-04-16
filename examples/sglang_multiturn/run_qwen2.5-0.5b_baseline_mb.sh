@@ -1,6 +1,6 @@
 set -x
 
-export VLLM_ATTENTION_BACKEND=XFORMER
+export VLLM_ATTENTION_BACKEND=XFORMERS
 export PYTHONUNBUFFERED=1
 export HF_HUB_OFFLINE=1
 export HF_ENDPOINT=https://hf-mirror.com
