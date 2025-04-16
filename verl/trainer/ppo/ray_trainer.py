@@ -423,6 +423,8 @@ class RayPPOTrainer(object):
         else:
             dataset_cls = RLHFDataset
 
+        need_tools_kwargs = self.config.actor_rollout_ref.rollout.tool_kwargs.tools_config_file is not None
+        
         self.train_dataset = dataset_cls(
             data_files=self.config.data.train_files,
             tokenizer=self.tokenizer,
@@ -430,6 +432,20 @@ class RayPPOTrainer(object):
             config=self.config.data,
         )
 
+        self.train_dataset = RLHFDataset(parquet_files=self.config.data.train_files,
+                                         tokenizer=self.tokenizer,
+                                         processor=self.processor,
+                                         prompt_key=self.config.data.prompt_key,
+                                         image_key=self.config.data.get('image_key', 'images'),
+                                         max_prompt_length=self.config.data.max_prompt_length,
+                                         filter_prompts=True,
+                                         return_raw_chat=self.config.data.get('return_raw_chat', False),
+                                         truncation=self.config.data.get('truncation', 'error'),
+                                         filter_overlong_prompts=self.config.data.filter_overlong_prompts,
+                                         need_tools_kwargs=need_tools_kwargs)
+        assert self.train_dataset.truncation == self.config.data.get(
+            'truncation', 'error'
+        ), f'dataset truncation {self.train_dataset.truncation} must be the same as config {self.config.data.get("truncation", "error")}'
         # use sampler for better ckpt resume
         if self.config.data.shuffle:
             train_dataloader_generator = torch.Generator()
@@ -451,6 +467,7 @@ class RayPPOTrainer(object):
             tokenizer=self.tokenizer,
             processor=self.processor,
             config=self.config.data,
+            need_tools_kwargs=need_tools_kwargs
         )
         self.val_dataloader = StatefulDataLoader(
             dataset=self.val_dataset,

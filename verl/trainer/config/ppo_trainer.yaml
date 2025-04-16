@@ -121,7 +121,7 @@ actor_rollout_ref:
     multi_turn: False # should set rollout.name to sglang_async if True
     max_turns: null  # null for no limit
     tool_kwargs:
-      tools_config_file: None
+      tools_config_file: null
 
 critic:
   rollout_n: ${actor_rollout_ref.rollout.n}

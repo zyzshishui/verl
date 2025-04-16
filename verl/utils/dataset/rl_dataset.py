@@ -63,6 +63,7 @@ class RLHFDataset(Dataset):
         tokenizer: PreTrainedTokenizer,
         config: DictConfig,
         processor: Optional[ProcessorMixin] = None,
+        need_tools_kwargs=False
     ):
         if not isinstance(data_files, (List, ListConfig)):
             data_files = [data_files]
@@ -85,6 +86,7 @@ class RLHFDataset(Dataset):
 
         self.num_workers = config.get("filter_overlong_prompts_workers", max(1, os.cpu_count() // 4))
         self.num_workers = min(self.num_workers, os.cpu_count())
+        self.need_tools_kwargs = need_tools_kwargs
 
         # whether to store the dataset in state_dict()
         # default not store
@@ -241,8 +243,8 @@ class RLHFDataset(Dataset):
         # add index for each prompt
         index = row_dict.get("extra_info", {}).get("index", 0)
         tools_kwargs = row_dict.get("extra_info", {}).get("tools_kwargs", {})
-        if not tools_kwargs:
-            logger.warning(f"tools_kwargs is empty for index {index}, data: {row_dict}")
+        if self.need_tools_kwargs and not tools_kwargs:
+            logger.warning(f"tools_kwargs is empty for index {index}, data source: {row_dict['data_source']}")
         row_dict["index"] = index
         row_dict["tools_kwargs"] = tools_kwargs
         return row_dict
