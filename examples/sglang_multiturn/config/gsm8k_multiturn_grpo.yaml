@@ -18,7 +18,7 @@ data:
 actor_rollout_ref:
   hybrid_engine: True
   model:
-    path: Qwen/Qwen2.5-3B-Instruct
+    path: Qwen/Qwen2.5-3B
     external_lib: null
     override_config: { }
     enable_gradient_checkpointing: True
@@ -32,12 +32,12 @@ actor_rollout_ref:
     use_dynamic_bsz: True
     ppo_max_token_len_per_gpu: 32768 # n * ${data.max_prompt_length} + ${data.max_response_length}
     grad_clip: 1.0
-    clip_ratio: 0.2
-    clip_ratio_low: 0.2
-    clip_ratio_high: 0.2
+    clip_ratio: 0.1
+    clip_ratio_low: 0.1
+    clip_ratio_high: 0.1
     clip_ratio_c: 3.0
     loss_agg_mode: "token-mean" # / "seq-mean-token-sum" / "seq-mean-token-mean"
-    entropy_coeff: 0
+    entropy_coeff: 0.000
     use_kl_loss: True # True for GRPO
     use_torch_compile: True # False to disable torch compile
     kl_loss_coef: 0.001 # for grpo
@@ -56,14 +56,16 @@ actor_rollout_ref:
       total_training_steps: -1  # must be override by program
     fsdp_config:
       wrap_policy:
+        # transformer_layer_cls_to_wrap: None
         min_num_params: 0
-      param_offload: False
-      optimizer_offload: False
+      param_offload: True
+      optimizer_offload: True
       fsdp_size: -1
   ref:
     fsdp_config:
       param_offload: True
       wrap_policy:
+        # transformer_layer_cls_to_wrap: None
         min_num_params: 0
     log_prob_micro_batch_size: null # will be deprecated, use log_prob_micro_batch_size_per_gpu
     log_prob_micro_batch_size_per_gpu: null
@@ -72,7 +74,7 @@ actor_rollout_ref:
     ulysses_sequence_parallel_size: ${actor_rollout_ref.actor.ulysses_sequence_parallel_size} # sp size
   rollout:
     name: sglang_async
-    temperature: 1.0
+    temperature: 0.3
     top_k: -1 # 0 for hf rollout, -1 for vllm rollout
     top_p: 1
     use_fire_sampling: False # https://arxiv.org/abs/2410.21236
@@ -80,13 +82,13 @@ actor_rollout_ref:
     response_length: ${data.max_response_length}
     # for vllm rollout
     dtype: bfloat16 # should align with FSDP
-    gpu_memory_utilization: 0.6
+    gpu_memory_utilization: 0.9
     ignore_eos: False
     enforce_eager: True
     free_cache_engine: True
     load_format: dummy_dtensor
     tensor_model_parallel_size: 2
-    max_num_batched_tokens: 61440
+    max_num_batched_tokens: 24576
     max_model_len: null
     max_num_seqs: 1024
     log_prob_micro_batch_size: null # will be deprecated, use log_prob_micro_batch_size_per_gpu
@@ -97,14 +99,15 @@ actor_rollout_ref:
     enable_chunked_prefill: True # may get higher throughput when set to True. When activated, Please increase max_num_batched_tokens or decrease max_model_len.
     # for hf rollout
     do_sample: True
-    n: 4
+    # number of responses (i.e. num sample times)
+    n: 8
     val_kwargs:
       # sampling parameters for validation
       top_k: -1 # 0 for hf rollout, -1 for vllm rollout
       top_p: 1.0
-      temperature: 0
-      n: 1
-      do_sample: False # default eager for validation
+      temperature: 0.7
+      n: 2
+      do_sample: True # default eager for validation
     multi_turn: True
     max_turns: 5
     tool_kwargs:
@@ -120,7 +123,7 @@ critic:
     warmup_style: constant  # select from constant/cosine
     total_training_steps: -1  # must be override by program
   model:
-    path: Qwen/Qwen2.5-0.5B-Instruct
+    path: Qwen/Qwen2.5-3B
     tokenizer_path: ${actor_rollout_ref.model.path}
     override_config: { }
     external_lib: ${actor_rollout_ref.model.external_lib}
@@ -130,6 +133,7 @@ critic:
       param_offload: False
       optimizer_offload: False
       wrap_policy:
+        # transformer_layer_cls_to_wrap: None
         min_num_params: 0
       fsdp_size: -1
   ppo_mini_batch_size: ${actor_rollout_ref.actor.ppo_mini_batch_size}
@@ -166,22 +170,22 @@ algorithm:
 trainer:
   balance_batch: True
   hybrid_engine: True
-  total_epochs: 15
+  total_epochs: 10
   total_training_steps: null
   project_name: gsm8k_async_rl
-  experiment_name: qwen-2.5-0.5b-instruct-with-submit-answer-and-responese-2504152255
+  experiment_name: qwen7b_sft2_16k_t08_n8_v6
   logger: [ 'console', 'wandb' ]
   log_val_generations: 0
   nnodes: 1
   n_gpus_per_node: 4
-  save_freq: -1 # -1 for no save
+  save_freq: 100
   # auto: find the last ckpt to resume. If can't find, start from scratch
   resume_mode: auto # or auto or resume_path if
   resume_from_path: False
   val_before_train: True
-  test_freq: 5
+  test_freq: -1
   critic_warmup: 0
   default_hdfs_dir: null
   remove_previous_ckpt_in_save: True
   del_local_ckpt_after_load: True
-  default_local_dir: /root/checkpoints/${trainer.project_name}/${trainer.experiment_name}
+  default_local_dir: /workspace/gsm8k/ckpt/${trainer.project_name}/${trainer.experiment_name}
