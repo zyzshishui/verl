@@ -128,7 +128,7 @@ def test_sglang_rollout():
         CUDA_VISIBLE_DEVICES = str(local_rank)
         os.environ['CUDA_VISIBLE_DEVICES'] = CUDA_VISIBLE_DEVICES
         print(f"CUDA_VISIBLE_DEVICES is not set, set to {CUDA_VISIBLE_DEVICES}")
-    local_model_path = '/user/longxiang1/models/Qwen/Qwen2.5-0.5B'
+    model_path = 'Qwen/Qwen2.5-0.5B'
     
     sampling_params = dict(
         n=1,
@@ -160,11 +160,11 @@ def test_sglang_rollout():
     })
 
     # 准备模型和tokenizer
-    tokenizer = AutoTokenizer.from_pretrained(local_model_path, padding_side='left')
+    tokenizer = AutoTokenizer.from_pretrained(model_path, padding_side='left')
     tokenizer.pad_token = tokenizer.eos_token
     
     actor_model = AutoModelForCausalLM.from_pretrained(
-        local_model_path,
+        model_path,
         torch_dtype=dtype,
         device_map="cuda"
     )
@@ -259,7 +259,7 @@ def test_sglang_rollout():
 
     # initialize rollout and sharding manager
     rollout = AsyncSGLangRollout(
-        actor_module=local_model_path,
+        actor_module=model_path,
         config=rollout_config,
         tokenizer=tokenizer,
         model_hf_config=actor_model.config
