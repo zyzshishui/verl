@@ -17,6 +17,7 @@ import re
 from typing import List, Union, Optional
 import copy
 import datasets
+import logging
 from collections import defaultdict
 
 import torch
@@ -27,6 +28,8 @@ from omegaconf import ListConfig, DictConfig
 
 from verl.utils.model import compute_position_id_with_mask
 import verl.utils.torch_functional as verl_F
+
+logger = logging.getLogger(__name__)
 
 
 def collate_fn(data_list: list[dict]) -> dict:
@@ -67,6 +70,7 @@ class RLHFDataset(Dataset):
 
         self.data_files = copy.deepcopy(data_files)
         self.original_data_files = copy.deepcopy(data_files)  # use for resume
+
         self.tokenizer = tokenizer
         self.processor = processor
         self.config = config
@@ -83,6 +87,7 @@ class RLHFDataset(Dataset):
 
         self.num_workers = config.get("filter_overlong_prompts_workers", max(1, os.cpu_count() // 4))
         self.num_workers = min(self.num_workers, os.cpu_count())
+
         self.need_tools_kwargs = need_tools_kwargs
 
         # whether to store the dataset in state_dict()

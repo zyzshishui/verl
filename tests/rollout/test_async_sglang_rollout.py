@@ -128,6 +128,7 @@ def test_sglang_rollout():
         CUDA_VISIBLE_DEVICES = str(local_rank)
         os.environ['CUDA_VISIBLE_DEVICES'] = CUDA_VISIBLE_DEVICES
         print(f"CUDA_VISIBLE_DEVICES is not set, set to {CUDA_VISIBLE_DEVICES}")
+
     model_path = 'Qwen/Qwen2.5-0.5B'
     
     sampling_params = dict(

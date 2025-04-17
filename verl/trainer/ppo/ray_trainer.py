@@ -841,8 +841,9 @@ class RayPPOTrainer(object):
             for batch_dict in self.train_dataloader:
                 metrics = {}
                 timing_raw = {}
-
+                # print(f"batch_dict: {batch_dict}")
                 batch: DataProto = DataProto.from_single_dict(batch_dict)
+                # print(f"DataProto.from_single_dict(batch_dict): {batch}")
 
                 # pop those keys for generation
                 non_tensor_batch_keys = ['raw_prompt_ids']
@@ -863,7 +864,7 @@ class RayPPOTrainer(object):
                     # generate a batch
                     with _timer('gen', timing_raw):
                         gen_batch_output = self.actor_rollout_wg.generate_sequences(gen_batch)
-
+                    # print(f"gen_batch_output: {gen_batch_output}")
                     if self.config.algorithm.adv_estimator == AdvantageEstimator.REMAX:
                         with _timer('gen_max', timing_raw):
                             gen_baseline_batch = deepcopy(gen_batch)
