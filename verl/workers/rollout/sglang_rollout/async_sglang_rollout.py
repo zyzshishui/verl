@@ -51,7 +51,6 @@ from verl.workers.tool.base_tool import BaseTool
 from verl.utils.torch_functional import get_response_mask, pad_sequence_to_length, pad_2d_list_to_length
 from verl.utils.model import compute_position_id_with_mask
 from verl.third_party.sglang import parallel_state as sglang_ps
-from verl.workers.rollout.sglang_rollout.verl_engine_with_async import VerlEngineWithAsync
 from verl.workers.rollout.data_model import Message, AsyncRolloutRequest, AsyncRolloutRequestStateEnum, FinishReasonTypeEnum
 from verl.workers.tool.data_model import OpenAIFunctionParsedSchema, OpenAIFunctionToolCall
 from sglang.srt.sampling.sampling_params import SamplingParams
@@ -265,23 +264,6 @@ class AsyncSGLangRollout(BaseRollout):
         else:
             self._engine = None
         
-        # self.inference_engine = VerlEngineWithAsync(
-        #     model_path=actor_module,
-        #     dtype=config.dtype,
-        #     mem_fraction_static=config.gpu_memory_utilization,
-        #     device_mesh_cpu=device_mesh_cpu["tp"],
-        #     enable_memory_saver=True,
-        #     base_gpu_id=0,
-        #     gpu_id_step=1,
-        #     # NOTE(Chenyang): if you want to debug the sglang engine
-        #     # please set the following parameters
-        #     # Otherwise, it will make the engine run too slow
-        #     # log_level="INFO",
-        #     # log_requests=True,
-        #     # log_requests_level=2,
-        #     # max_running_requests=1,
-        # )
-
         # offload
         if self._tp_rank == 0:
             self._engine.release_memory_occupation()
