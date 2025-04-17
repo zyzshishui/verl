@@ -69,6 +69,12 @@ class MegatronPPOCritic(BasePPOCritic):
     def _validate_config(self, config) -> None:
         """Validate config options not implemented for Megatron backend"""
         assert config.get('ulysses_sequence_parallel_size', 1) == 1
+        if config.shuffle:
+            assert config.data_loader_seed is not None, f'If shuffle dataloader, seed must be manually set'
+        if config.megatron.tensor_model_parallel_size == 1:
+            print(f'[Warining] Because critic tp size == 1, set sp to False')
+            config.megatron.sequence_parallel = False
+        self.config = config
 
     def compute_values(self, data: DataProto) -> DataProto:
         # data.batch = data.batch.to(self.critic_module.module.device)
@@ -104,6 +110,7 @@ class MegatronPPOCritic(BasePPOCritic):
         data = data.select(batch_keys=select_keys)
         return data.make_iterator(mini_batch_size=self.config.ppo_mini_batch_size,
                                   epochs=self.config.ppo_epochs,
+                                  seed=self.config.data_loader_seed,
                                   dataloader_kwargs={'shuffle': self.config.shuffle})
 
     def forward_backward_batch(self, data: DataProto, forward_only=False):
@@ -130,7 +137,7 @@ class MegatronPPOCritic(BasePPOCritic):
 
         def loss_func(output, data, meta_info):
             if forward_only:
-                return 1.0, {'vpreds': output.logits}
+                return 1.0, {'vpreds': output}
 
             responses = data['responses']
             attention_mask = data['attention_mask']
@@ -138,22 +145,22 @@ class MegatronPPOCritic(BasePPOCritic):
             returns = data['returns']
             response_length = responses.size(1)
 
-            eos_mask = attention_mask[:, -response_length:]
+            response_mask = attention_mask[:, -response_length:]
 
             cliprange_value = self.config.cliprange_value
 
-            vpreds = output.logits  # (bs, sequence_length)
+            vpreds = output  # (bs, sequence_length)
             vpreds = vpreds[:, -response_length - 1:-1]
 
             vf_loss, vf_clipfrac = core_algos.compute_value_loss(vpreds=vpreds,
                                                                  values=values,
                                                                  returns=returns,
-                                                                 eos_mask=eos_mask,
+                                                                 response_mask=response_mask,
                                                                  cliprange_value=cliprange_value)
             stats = {
                 'critic/vf_loss': vf_loss.detach().item(),
                 'critic/vf_clipfrac': vf_clipfrac.detach().item(),
-                'critic/vpred_mean': masked_mean(vpreds, eos_mask).detach().item(),
+                'critic/vpred_mean': masked_mean(vpreds, response_mask).detach().item(),
             }
 
             return vf_loss, stats
@@ -163,7 +170,15 @@ class MegatronPPOCritic(BasePPOCritic):
             input_ids = batch['input_ids']
             attention_mask = batch['attention_mask']
             position_ids = batch['position_ids']
-            output = model(input_ids=input_ids, attention_mask=attention_mask, position_ids=position_ids)
+            from verl.models.mcore import gptmodel_forward
+
+            output = gptmodel_forward(model,
+                                      input_ids,
+                                      attention_mask,
+                                      position_ids,
+                                      sequence_parallel=self.megatron_config.sequence_parallel,
+                                      value_model=True)
+
             return output, partial(loss_func, data=batch, meta_info={})
 
         # batch should be a list of batches inside micro-batches
