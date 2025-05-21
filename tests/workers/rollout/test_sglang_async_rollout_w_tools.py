@@ -111,7 +111,7 @@ def test_async_sglang_rollout_w_tool():
 
         prompts = rollout_sharding_manager.preprocess_data(prompts)
         # log_gpu_memory_usage("Before generating sequences", logger=None)
-        output = rollout.generate_sequences_with_tools(prompts=prompts)
+        output = rollout.generate_sequences(prompts=prompts)
         print(f"generated {output.batch['responses'].shape=}")
         # log_gpu_memory_usage("After generating sequences", logger=None)
         output = rollout_sharding_manager.postprocess_data(output)

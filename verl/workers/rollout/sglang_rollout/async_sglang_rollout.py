@@ -52,7 +52,6 @@ from verl.workers.rollout.schemas import (
     FinishReasonTypeEnum,
     Message,
 )
-from verl.workers.rollout.sglang_rollout.sglang_rollout import _post_process_outputs, _pre_process_inputs
 from verl.workers.rollout.sglang_rollout.utils import broadcast_pyobj
 
 if TYPE_CHECKING:
@@ -60,6 +59,41 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
+
+
+# NOTE(sgm): add for verl. We can optimize it by making the dataloader yield List[int] without padding.
+def _pre_process_inputs(pad_token_id, prompt_token_ids: torch.Tensor) -> list[int]:
+    # remove the left padding in the prompt token_id
+    # pad_token_id = self.llm_engine.tokenizer.pad_token_id if self.llm_engine.tokenizer.pad_token_id is
+    # not None else self.llm_engine.tokenizer.eos_token_id
+    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][0]
+    token_ids = prompt_token_ids[non_pad_index:].tolist()
+    return token_ids
+
+
+# NOTE(linjunrong): adhoc
+def _post_process_outputs(tokenizer, output):
+    def _map_each_response(resp):
+        log_probs = []
+        output_token_ids = []
+        for log_prob, token_ids, _ in resp["meta_info"]["output_token_logprobs"]:
+            log_probs.append(log_prob)
+            output_token_ids.append(token_ids)
+        log_probs = torch.tensor(log_probs)
+        output_token_ids = torch.tensor(output_token_ids)
+        return output_token_ids, log_probs
+
+    out_map = map(lambda x: _map_each_response(x), output)
+    batched_output_token_ids = []
+    batched_logprobs = []
+    for output_token_ids, log_probs in out_map:
+        batched_output_token_ids.append(output_token_ids)
+        batched_logprobs.append(log_probs)
+    pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
+    batched_output_token_ids = pad_sequence(batched_output_token_ids, batch_first=True, padding_value=pad_token_id)
+    if len(batched_logprobs) > 0:
+        batched_logprobs = pad_sequence(batched_logprobs, batch_first=True, padding_value=pad_token_id)
+    return batched_output_token_ids, batched_logprobs
 
 
 def get_tool_call_parser_type(tokenizer: PreTrainedTokenizer) -> str:
@@ -294,11 +328,16 @@ class AsyncSGLangRollout(BaseRollout):
         for key, value in old_sampling_params_args.items():
             self.sampling_params[key] = value
 
-    @GPUMemoryLogger(role="sglang async rollout", logger=logger)
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
-        # if self.config.free_cache_engine:
+        if self.config.multi_turn.enable:
+            return self._req_level_generate_sequences(prompts, **kwargs)
+        return self._batch_level_generate_sequences(prompts, **kwargs)
 
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
+    @torch.no_grad()
+    def _batch_level_generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
         idx = prompts.batch["input_ids"]  # (bs, prompt_length)
         # left-padded attention_mask
         attention_mask = prompts.batch["attention_mask"]
@@ -580,10 +619,20 @@ class AsyncSGLangRollout(BaseRollout):
         _req.finalize(self.tokenizer, tool_reward_scores, finish_reason_type)
 
         return _req
-
-    @GPUMemoryLogger(role="sglang async rollout", logger=logger)
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
     def generate_sequences_with_tools(self, prompts: DataProto, **kwargs) -> DataProto:
+        import warnings
+        warnings.warn(
+            "`generate_sequences_with_tools` is deprecated, please use `generate_sequences(...)`",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._req_level_generate_sequences(prompts, **kwargs)
+
+    @GPUMemoryLogger(role="sglang rollout", logger=logger)
+    @torch.no_grad()
+    def _req_level_generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
         # Async rollout with tools support
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
