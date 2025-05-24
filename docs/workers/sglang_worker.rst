@@ -87,7 +87,7 @@ Why export SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK?
 
 1. ``verl`` initializes a ``SGLangRollout`` module during rollout, which is used to evaluate/generate samples.
 
-2. ``SGLangRollout`` will initialize ``VerlEngine``, and further initialize a ``torch.distributed.DeviceMesh``, used to support Tensor Parallel (TP).
+2. ``SGLangRollout`` will initialize ``Engine``, and further initialize a ``torch.distributed.DeviceMesh``, used to support Tensor Parallel (TP).
 
 3. ``DeviceMesh.init()`` internally checks the free GPU memory of all participating devices. If the difference is too large (more than ~10%), it directly reports an error to avoid initialization failures or deadlocks.
 
@@ -111,7 +111,7 @@ Early workers already use up GPU memory → late workers still have empty memory
 
 **3. SGLang's TP init uses "all-device broadcast", but there's no uniform release timing**
 
-Although ``SGLangRollout`` may only involve subset of GPUs, its ``VerlEngine`` initialization calls ``torch.distributed.init_process_group()`` and broadcasts weights, so:
+Although ``SGLangRollout`` may only involve subset of GPUs, its ``Engine`` initialization calls ``torch.distributed.init_process_group()`` and broadcasts weights, so:
 
 - Non-rollout GPUs also join the communication.
 - Later on, ``DeviceMesh`` init will fail due to "inconsistent memory".

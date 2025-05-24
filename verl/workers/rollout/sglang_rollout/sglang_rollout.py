@@ -75,9 +75,7 @@ def _pre_process_inputs(
     prompt_token_ids: torch.Tensor,
 ) -> list[int]:
     # remove the left padding in the prompt token_id
-    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][
-        0
-    ]
+    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][0]
     token_ids = prompt_token_ids[non_pad_index:].tolist()
     return token_ids
 
@@ -212,13 +210,8 @@ class SGLangRollout(BaseRollout):
           (prompt_length + response_length): {self.config.max_model_len} >=
           {self.config.prompt_length} + {self.config.response_length}"""
         assert (
-            model_hf_config.max_position_embeddings
-            >= self.config.max_model_len
+            model_hf_config.max_position_embeddings >= self.config.max_model_len
         ), "model context length should be greater than total sequence length"
-
-        # TODO(chenyang): is `max_turns` the max number of tool call rounds?
-        # If so, I think it should be a small number like 3 or 5.
-        # self.config.max_model_len // 3 is a large number.
 
         # `max_turns` stands for max number of tool calls
         if self.config.multi_turn.max_turns is None:
@@ -234,7 +227,10 @@ class SGLangRollout(BaseRollout):
                 mesh_dim_names=["dp", "tp", "pp"],
             )
 
-            self._device_mesh_cpu = init_device_mesh("cpu", **device_mesh_kwargs)
+            self._device_mesh_cpu = init_device_mesh(
+                "cpu",
+                **device_mesh_kwargs,
+            )
 
         self._rank = self._device_mesh_cpu.get_rank()
         self._tp_rank = self._device_mesh_cpu["tp"].get_local_rank()
@@ -290,12 +286,14 @@ class SGLangRollout(BaseRollout):
                 dist_init_addr=dist_init_addr,
                 nnodes=nnodes,
                 trust_remote_code=trust_remote_code,
-                # NOTE(linjunrong): add rank to prevent SGLang generate same port inside PortArgs.init_new
+                # NOTE(linjunrong): add rank to prevent SGLang
+                # generate same port inside PortArgs.init_new
                 # when random.seed is being set during training
                 port=30000 + rank,
-                # NOTE(Chenyang): if you want to debug the SGLang engine output
-                # please set the following parameters
-                # Otherwise, it will make the engine run too slow
+                # NOTE(Chenyang): if you want to debug the SGLang
+                # engine output, please set these parameters.
+                # Do not set them in production.
+                # It will make the engine run too slow.
                 # log_level="INFO",
                 # log_requests=True,
                 # log_requests_level=2,
