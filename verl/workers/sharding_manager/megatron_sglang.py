@@ -21,7 +21,6 @@ import os
 import torch
 import torch.distributed as dist
 from sglang.srt.entrypoints.engine import Engine
-from sglang.srt.entrypoints.verl_engine import VerlEngine
 from sglang.srt.model_executor.model_runner import LocalSerializedTensor
 from sglang.srt.utils import MultiprocessingSerializer
 from torch import nn

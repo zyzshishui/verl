@@ -75,9 +75,7 @@ def _pre_process_inputs(
     prompt_token_ids: torch.Tensor,
 ) -> list[int]:
     # remove the left padding in the prompt token_id
-    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][
-        0
-    ]
+    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][0]
     token_ids = prompt_token_ids[non_pad_index:].tolist()
     return token_ids
 
@@ -215,10 +213,6 @@ class SGLangRollout(BaseRollout):
             model_hf_config.max_position_embeddings >= self.config.max_model_len
         ), "model context length should be greater than total sequence length"
 
-        # TODO(chenyang): is `max_turns` the max number of tool call rounds?
-        # If so, I think it should be a small number like 3 or 5.
-        # self.config.max_model_len // 3 is a large number.
-
         # `max_turns` stands for max number of tool calls
         if self.config.multi_turn.max_turns is None:
             self.config.multi_turn.max_turns = self.config.max_model_len // 3
@@ -254,7 +248,6 @@ class SGLangRollout(BaseRollout):
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(sorted(list(visible_devices_set)))
 
         # initialize the inference engine
-        # TODO(chenyang): Strange way to calculate nnodes.
         nnodes = -(-tp_size // len(visible_devices_set))
         if nnodes > 1:
             ip = get_ip()

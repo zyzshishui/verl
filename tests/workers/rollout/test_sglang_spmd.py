@@ -15,7 +15,7 @@
 import os
 
 import torch
-from sglang.srt.entrypoints.verl_engine import VerlEngine
+from sglang.srt.entrypoints.engine import Engine
 from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
@@ -128,19 +128,14 @@ def test_sglang_spmd():
         ignore_eos=False,
     )
 
-    tensor_parallel_size = 4
-    device_mesh_kwargs = dict(mesh_shape=(1, tensor_parallel_size, 1), mesh_dim_names=["dp", "tp", "pp"])
-    inference_device_mesh_cpu = init_device_mesh("cpu", **device_mesh_kwargs)
-
     for k in ["TORCHELASTIC_USE_AGENT_STORE"]:
         if k in os.environ:
             del os.environ[k]
     print("building sglang rollout engine")
-    llm = VerlEngine(
+    llm = Engine(
         model_path=local_model_path,
         dtype="bfloat16",
         mem_fraction_static=0.5,
-        device_mesh_cpu=inference_device_mesh_cpu["tp"],
         base_gpu_id=0,
         gpu_id_step=1,
     )
@@ -197,3 +192,5 @@ def _pre_process_inputs(pad_token_id, prompt_token_ids: torch.Tensor):
     non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][0]
     token_ids = prompt_token_ids[non_pad_index:].tolist()
     return token_ids
+if __name__ == "__main__":
+    test_sglang_spmd()
