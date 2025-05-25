@@ -75,9 +75,7 @@ def _pre_process_inputs(
     prompt_token_ids: torch.Tensor,
 ) -> list[int]:
     # remove the left padding in the prompt token_id
-    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][
-        0
-    ]
+    non_pad_index = torch.nonzero(prompt_token_ids != pad_token_id, as_tuple=False)[0][0]
     token_ids = prompt_token_ids[non_pad_index:].tolist()
     return token_ids
 
@@ -284,7 +282,6 @@ class SGLangRollout(BaseRollout):
             dist_init_addr = None
 
         # The format of the model weights to be loaded.
-        # TODO(chenyang): why we set `load_format` to `dummy`?
 
         # “auto” will try to load the weights in the safetensors format and
         # fall back to the pytorch bin format if safetensors format is not
