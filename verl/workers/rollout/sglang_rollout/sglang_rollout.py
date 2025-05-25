@@ -284,18 +284,6 @@ class SGLangRollout(BaseRollout):
             dist_init_addr = None
 
         # The format of the model weights to be loaded.
-        # TODO(chenyang): why we set `load_format` to `dummy`?
-
-        # “auto” will try to load the weights in the safetensors format and
-        # fall back to the pytorch bin format if safetensors format is not
-        # available.
-        # “pt” will load the weights in the pytorch bin format.
-        # “safetensors” will load the weights in the safetensors format.
-        # “dummy” will initialize the weights with random values, which is
-        # mainly for profiling.
-        # “bitsandbytes” will load the weights using bitsandbytes quantization.
-        # “npcache” will load the weights in pytorch format and store a numpy
-        # cache to speed up the loading.
 
         load_format = (
             "dummy" if config.load_format.startswith("dummy") else config.load_format
@@ -478,8 +466,8 @@ class SGLangRollout(BaseRollout):
             yield
             # Yield and execute the code within the 'with' block
         finally:
-            # Always restore original values, even if an error occurred
-            # in the `with` block
+            # Always restore original values, even if an error
+            # occurred in the `with` block
             for key, value in old_sampling_params_args.items():
                 self.sampling_params[key] = value
 
@@ -487,14 +475,63 @@ class SGLangRollout(BaseRollout):
     @torch.no_grad()
     def generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
         if self.config.multi_turn.enable:
-            return self._req_level_generate_sequences(prompts, **kwargs)
-        return self._batch_level_generate_sequences(prompts, **kwargs)
+            return self._generate_req_level_sequences(prompts, **kwargs)
+        return self._generate_batch_level_sequences(prompts, **kwargs)
 
     @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
-    def _batch_level_generate_sequences(
+    def _generate_batch_level_sequences(
         self, prompts: DataProto, **kwargs
     ) -> DataProto:
+        """Generates sequences for a batch of prompts in a single pass.
+
+        This method handles "batch-level" sequence generation, meaning it processes
+        all prompts within the input `DataProto` object simultaneously. Each prompt
+        is treated as an independent generation task, and the model generates a
+        response for each in a single call to the SGLang engine. This method
+        is invoked when `config.multi_turn.enable` is False.
+
+        This contrasts with "request-level" generation (handled by
+        `_req_level_generate_sequences`), which is designed for more complex,
+        potentially multi-turn interactions involving individual requests that might
+        include tool usage and state management. Batch-level generation is
+        more straightforward and is typically used when multi-turn capabilities
+        or tool integration are not required for the given prompts.
+
+        The process involves:
+        1.  Extracting and pre-processing prompt token IDs from the input `prompts`.
+            This includes handling padding and preparing raw token ID lists.
+        2.  Preparing inputs for the SGLang engine, including multi-modal data
+            if present.
+        3.  Invoking the SGLang engine (`self._engine.async_generate`) with the
+            batch of processed inputs and specified sampling parameters on the
+            master tensor-parallel (TP) rank.
+        4.  Broadcasting the results from the master TP rank to all other TP ranks.
+        5.  Post-processing the engine's output to format the generated token IDs
+            and (if applicable) log probabilities.
+        6.  Constructing the final sequences by concatenating original prompts with
+            the generated responses.
+        7.  Updating attention masks and position IDs to reflect the full
+            concatenated sequences.
+        8.  If `self.config.free_cache_engine` is true, the SGLang engine's
+            KV cache is flushed after generation on the master TP rank.
+
+        Args:
+            prompts: A `DataProto` object containing the batch of input prompts,
+                including tensor data (like `input_ids`, `attention_mask`) and
+                meta-information (like `eos_token_id`, `do_sample`).
+            **kwargs: Additional keyword arguments that can override the default
+                sampling parameters (e.g., `temperature`, `top_p`, `max_new_tokens`).
+                These are temporarily applied using `update_sampling_params`.
+
+        Returns:
+            DataProto: A `DataProto` object containing the batch of generated
+                sequences. This includes tensors for `prompts` (original input IDs),
+                `responses` (generated token IDs), `input_ids` (concatenated
+                prompt and response), `attention_mask`, and `position_ids` for
+                the full sequences. Non-tensor batch data is also updated if
+                sampling results in multiple sequences per prompt (n > 1).
+        """
         idx = prompts.batch["input_ids"]  # (bs, prompt_length)
         # left-padded attention_mask
         attention_mask = prompts.batch["attention_mask"]
@@ -872,11 +909,11 @@ class SGLangRollout(BaseRollout):
             DeprecationWarning,
             stacklevel=2,
         )
-        return self._req_level_generate_sequences(prompts, **kwargs)
+        return self._generate_req_level_sequences(prompts, **kwargs)
 
     @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
-    def _req_level_generate_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
+    def _generate_req_level_sequences(self, prompts: DataProto, **kwargs) -> DataProto:
         # Async rollout with tools support
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
