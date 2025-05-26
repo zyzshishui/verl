@@ -483,61 +483,64 @@ class SGLangRollout(BaseRollout):
     def _generate_batch_level_sequences(
         self, prompts: DataProto, **kwargs
     ) -> DataProto:
-        """Generates sequences for a batch of prompts in a single pass.
+        """Generates sequences for a batch of prompts.
 
-        This method handles "batch-level" sequence generation, meaning it processes
-        all prompts within the input `DataProto` object simultaneously. Each prompt
-        is treated as an independent generation task, and the model generates a
-        response for each in a single call to the SGLang engine. This method
-        is invoked when `config.multi_turn.enable` is False.
+        For single-turn generation, all prompts are processed in one request.
 
-        This contrasts with "request-level" generation (handled by
-        `_req_level_generate_sequences`), which is designed for more complex,
-        potentially multi-turn interactions involving individual requests that might
-        include tool usage and state management. Batch-level generation is
-        more straightforward and is typically used when multi-turn capabilities
-        or tool integration are not required for the given prompts.
+        For multi-turn generation, each prompt is processed separately via
+        `_generate_req_level_sequences` for better tool calling control.
 
-        The process involves:
-        1.  Extracting and pre-processing prompt token IDs from the input `prompts`.
-            This includes handling padding and preparing raw token ID lists.
-        2.  Preparing inputs for the SGLang engine, including multi-modal data
-            if present.
-        3.  Invoking the SGLang engine (`self._engine.async_generate`) with the
-            batch of processed inputs and specified sampling parameters on the
-            master tensor-parallel (TP) rank.
-        4.  Broadcasting the results from the master TP rank to all other TP ranks.
-        5.  Post-processing the engine's output to format the generated token IDs
-            and (if applicable) log probabilities.
-        6.  Constructing the final sequences by concatenating original prompts with
-            the generated responses.
+        `_generate_batch_level_sequences` involves:
+        1.  Extracting and pre-processing prompt token IDs from the input
+            `prompts`. This includes handling padding and preparing raw
+            token ID lists.
+        2.  Preparing inputs for the SGLang engine, including multi-modal
+            data if present.
+        3.  Invoking the SGLang engine (`self._engine.async_generate`,
+            an async coroutine) with the batch of processed inputs and
+            specified sampling parameters on the master TP rank.
+        4.  Broadcasting the results from the master TP rank to all
+            other TP ranks.
+        5.  Post-processing the engine's output to format the generated
+            token IDs and (if applicable) log probabilities.
+        6.  Constructing the final sequences by concatenating original
+            prompts with the generated responses.
         7.  Updating attention masks and position IDs to reflect the full
             concatenated sequences.
         8.  If `self.config.free_cache_engine` is true, the SGLang engine's
             KV cache is flushed after generation on the master TP rank.
 
         Args:
-            prompts: A `DataProto` object containing the batch of input prompts,
-                including tensor data (like `input_ids`, `attention_mask`) and
-                meta-information (like `eos_token_id`, `do_sample`).
-            **kwargs: Additional keyword arguments that can override the default
-                sampling parameters (e.g., `temperature`, `top_p`, `max_new_tokens`).
-                These are temporarily applied using `update_sampling_params`.
+            prompts: A `DataProto` object containing the batch of
+              input prompts, including tensor data (like `input_ids`,
+              `attention_mask`) and meta-information (like `eos_token_id`,
+              `do_sample`).
+            **kwargs: Additional keyword arguments that can override the
+              default sampling parameters (e.g., `temperature`, `top_p`,
+              `max_new_tokens`). These are temporarily applied using
+              `update_sampling_params`.
 
         Returns:
-            DataProto: A `DataProto` object containing the batch of generated
-                sequences. This includes tensors for `prompts` (original input IDs),
-                `responses` (generated token IDs), `input_ids` (concatenated
-                prompt and response), `attention_mask`, and `position_ids` for
-                the full sequences. Non-tensor batch data is also updated if
-                sampling results in multiple sequences per prompt (n > 1).
+            DataProto: A `DataProto` object containing the batch of
+              generated sequences. This includes tensors for `prompts`
+              (original input IDs), `responses` (generated token IDs),
+              `input_ids` (concatenated prompt and response),
+              `attention_mask`, and `position_ids` for the full
+              sequences.
+
+        Note that when `n > 1`, each prompt generates multiple sequences,
+        so we need to replicate its non-tensor data (i.e. raw prompts,
+        messages, reward scores, etc.) n times to match the expanded
+        tensor data. This is done in the `_non_tensor_batch` dictionary.
         """
-        idx = prompts.batch["input_ids"]  # (bs, prompt_length)
-        # left-padded attention_mask
+        # input ids: (bs, prompt_length), left-padded
+        idx = prompts.batch["input_ids"]
+        # attention_mask: (bs, seq_length), left-padded
         attention_mask = prompts.batch["attention_mask"]
         position_ids = prompts.batch["position_ids"]
 
-        # used to construct attention_mask
+        # used to generate attention mask for the
+        # response based on EOS token position
         eos_token_id = prompts.meta_info["eos_token_id"]
 
         batch_size = idx.size(0)
@@ -576,7 +579,7 @@ class SGLangRollout(BaseRollout):
                 for raw_prompt_ids in non_tensor_batch.pop("raw_prompt_ids")
             ]
 
-        # Ensure token IDs are lists
+        # Ensure token IDs are lists or numpy arrays
         for input_data in sglang_inputs:
             if isinstance(input_data["prompt_token_ids"], np.ndarray):
                 input_data["prompt_token_ids"] = input_data["prompt_token_ids"].tolist()
@@ -593,7 +596,14 @@ class SGLangRollout(BaseRollout):
 
         do_sample = prompts.meta_info.get("do_sample", True)
         is_validate = prompts.meta_info.get("validate", False)
+
+        # TODO(chenyang): critical problem, the kwargs are set manually
+        # in these code blocks. So the passed-in kwargs are not used?
+        # Only if `do_sample` is true and `is_validate` is false, the
+        # passed-in kwargs will be used? Is this what we want?
+
         if not do_sample:
+            # Use deterministic generation parameters (greedy decoding)
             kwargs = dict(
                 n=1,
                 presence_penalty=0.0,
@@ -609,6 +619,7 @@ class SGLangRollout(BaseRollout):
                 spaces_between_special_tokens=True,
             )
         elif is_validate:
+            # Use validation-specific parameters
             kwargs = dict(
                 top_k=self.config.val_kwargs.top_k,
                 top_p=self.config.val_kwargs.top_p,
