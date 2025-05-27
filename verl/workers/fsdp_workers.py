@@ -415,7 +415,14 @@ class ActorRolloutRefWorker(Worker):
             )
             log_gpu_memory_usage("After building sharding manager", logger=logger)
 
-        elif rollout_name == "sglang":
+        elif rollout_name in ["sglang", "sglang_async"]:
+            if rollout_name == "sglang_async":
+                warnings.warn(
+                    "'sglang_async' has been deprecated and merged into 'sglang'. "
+                    "Please use 'sglang' going forward.",
+                    DeprecationWarning,
+                    stacklevel=2,
+                )
             from verl.workers.rollout.sglang_rollout import SGLangRollout
             # NOTE(linjunrong): Due to recent fp8 support in SGLang. Now importing any symbol relate to
             # SGLang's model_runner would check CUDA device capability. However, due to verl's setting,
