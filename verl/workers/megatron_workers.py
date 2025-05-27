@@ -256,6 +256,7 @@ class ActorRolloutRefWorker(MegatronWorker):
                 weight_converter=weight_converter,
             )
             log_gpu_memory_usage("After building sharding manager", logger=logger)
+
         elif self.config.rollout.name == "sglang":
             from verl.workers.rollout.sglang_rollout import SGLangRollout
 
@@ -287,7 +288,7 @@ class ActorRolloutRefWorker(MegatronWorker):
             weight_converter = get_mcore_weight_converter(self.actor_model_config, self.dtype)
             sharding_manager = MegatronSGLangShardingManager(
                 actor_module=self.actor.actor_module,
-                inference_engine=rollout.inference_engine,
+                inference_engine=rollout._engine,
                 model_config=self.actor_model_config,
                 transformer_config=self.tf_config,
                 layer_name_mapping=layer_name_mapping,
@@ -295,15 +296,15 @@ class ActorRolloutRefWorker(MegatronWorker):
                 device_mesh=rollout_device_mesh,
             )
             log_gpu_memory_usage("After building sharding manager", logger=logger)
-        elif self.config.rollout.name == "sglang_async":
-            from verl.workers.rollout.sglang_rollout import AsyncSGLangRollout
+        elif self.config.rollout.name == "sglang":
+            from verl.workers.rollout.sglang_rollout import SGLangRollout
 
             # NOTE(linjunrong): Due to recent fp8 support in SGLang. Now importing any symbol relate to SGLang's model_runner would check CUDA device capability.
             # However, due to verl's setting, the main process of ray can not find any CUDA device, which would potentially lead to:
             # "RuntimeError: No CUDA GPUs are available".
             # For this reason, sharding_manager.__init__ should not import FSDPSGLangShardingManager and we import it here use the abs path.
             # check: https://github.com/sgl-project/sglang/blob/00f42707eaddfc2c0528e5b1e0094025c640b7a0/python/sglang/srt/layers/quantization/fp8_utils.py#L76
-            from verl.workers.sharding_manager.megatron_sglang import MegatronAsyncSGLangShardingManager
+            from verl.workers.sharding_manager.megatron_sglang import MegatronSGLangShardingManager
 
             infer_tp = self.config.rollout.tensor_model_parallel_size
             dp = self.world_size // infer_tp
@@ -312,7 +313,7 @@ class ActorRolloutRefWorker(MegatronWorker):
 
             local_path = copy_to_local(self.config.model.path)
             log_gpu_memory_usage(f"Before building {self.config.rollout.name} rollout", logger=None)
-            rollout = AsyncSGLangRollout(
+            rollout = SGLangRollout(
                 actor_module=local_path,
                 config=self.config.rollout,
                 tokenizer=self.tokenizer,
@@ -325,7 +326,7 @@ class ActorRolloutRefWorker(MegatronWorker):
             from verl.models.mcore import get_mcore_weight_converter
 
             weight_converter = get_mcore_weight_converter(self.actor_model_config, self.dtype)
-            sharding_manager = MegatronAsyncSGLangShardingManager(
+            sharding_manager = MegatronSGLangShardingManager(
                 actor_module=self.actor.actor_module,
                 inference_engine=rollout._engine,
                 model_config=self.actor_model_config,
@@ -490,10 +491,10 @@ class ActorRolloutRefWorker(MegatronWorker):
 
             prompts = self.sharding_manager.preprocess_data(prompts)
             # output = self.rollout.generate_sequences(prompts=prompts)
-            if self.config.rollout.name == "sglang_async":
-                from verl.workers.rollout.sglang_rollout import AsyncSGLangRollout
+            if self.config.rollout.name == "sglang":
+                from verl.workers.rollout.sglang_rollout import SGLangRollout
 
-                if isinstance(self.rollout, AsyncSGLangRollout) and hasattr(self.rollout, "_tool_schemas") and len(self.rollout._tool_schemas) > 0:
+                if isinstance(self.rollout, SGLangRollout) and hasattr(self.rollout, "_tool_schemas") and len(self.rollout._tool_schemas) > 0:
                     output = self.rollout.generate_sequences_with_tools(prompts=prompts)
                 else:
                     output = self.rollout.generate_sequences(prompts=prompts)
