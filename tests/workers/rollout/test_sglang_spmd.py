@@ -20,46 +20,11 @@ from torch.distributed.device_mesh import init_device_mesh
 from transformers import AutoModelForCausalLM, AutoTokenizer, GenerationConfig
 
 from verl.utils.torch_functional import pad_sequence_to_length
-from .utils_sglang import levenshtein
-
-
-def are_lists_similar(a, b):
-    if len(a) != len(b):
-        print("The lists are of different lengths.")
-        return False
-
-    total_length = 0
-    total_diff = 0
-
-    for s1, s2 in zip(a, b):
-        max_len = max(len(s1), len(s2))
-        total_length += max_len
-        diff = levenshtein(s1, s2)
-        total_diff += diff
-        print(f"Comparing strings:\n{s1}\n{s2}\nDifference: {diff} characters\n")
-
-    percentage_difference = (total_diff / total_length) * 100
-    print(f"Total difference: {percentage_difference:.2f}%")
-
-    return percentage_difference <= 10
-
-
-def initialize_global_process_group(timeout_second=36000):
-    from datetime import timedelta
-
-    import torch.distributed
-
-    # NOTE MODIFIED should provide backend=None to have nccl+gloo
-    # torch.distributed.init_process_group('nccl', timeout=timedelta(seconds=timeout_second))
-    torch.distributed.init_process_group(timeout=timedelta(seconds=timeout_second))
-
-    local_rank = int(os.environ["LOCAL_RANK"])
-    rank = int(os.environ["RANK"])
-    world_size = int(os.environ["WORLD_SIZE"])
-
-    if torch.distributed.is_initialized():
-        torch.cuda.set_device(local_rank)
-    return local_rank, rank, world_size
+from .utils_sglang import (
+    levenshtein,
+    are_lists_similar,
+    initialize_global_process_group,
+)
 
 
 def test_sglang_spmd():
