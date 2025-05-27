@@ -26,7 +26,7 @@ import math
 import numpy as np
 import torch
 import torch.distributed as dist
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 from sglang.srt.entrypoints.engine import Engine
 from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.openai_api.protocol import Tool
@@ -297,6 +297,9 @@ class SGLangRollout(BaseRollout):
         load_format = (
             "dummy" if config.load_format.startswith("dummy") else config.load_format
         )
+         # copy it to avoid secretly modifying the engine config
+        engine_kwargs = {} if "engine_kwargs" not in config or "sglang" not in config.engine_kwargs else OmegaConf.to_container(deepcopy(config.engine_kwargs.sglang))
+        
         tp_size_per_node = self._tp_size // nnodes
         node_rank = self._tp_rank // tp_size_per_node
         first_rank_in_node = self._tp_rank % tp_size_per_node == 0
@@ -321,14 +324,15 @@ class SGLangRollout(BaseRollout):
                 # generate same port inside PortArgs.init_new
                 # when random.seed is being set during training
                 port=30000 + rank,
-                # NOTE(Chenyang): if you want to debug the SGLang
-                # engine output, please set these parameters.
-                # Do not set them in production.
-                # It will make the engine run too slow.
+                # Note: Enable below to display SGLang engine logs at INFO level
                 # log_level="INFO",
+                # Note: Enable below to display ReqInput in details, be careful about the log volume
                 # log_requests=True,
+                # Note: Log level for ReqInput, 0 for concise, 1 for log middle leve, 2 for verbose
                 # log_requests_level=2,
+                 # Note: Enable below to limit the number of running requests
                 # max_running_requests=1,
+                 **engine_kwargs,
             )
         else:
             self._engine = None
@@ -468,8 +472,6 @@ class SGLangRollout(BaseRollout):
         for key, value in kwargs.items():
             if key in self.sampling_params:
                 self.sampling_params[key] = value
-            else:
-                logger.warning(f"Sampling parameter {key} is not supported by SGLang.")
 
         try:
             yield
@@ -728,7 +730,11 @@ class SGLangRollout(BaseRollout):
                         f"Unexpected tool calling last message state: {_req.messages[-1]}"
                     )
             elif _req.state == AsyncRolloutRequestStateEnum.RUNNING:
-                generation_prompt = _req.get_generation_prompt(self.tokenizer)
+                generation_prompt_ids = _req.get_generation_prompt(self.tokenizer)
+                max_new_tokens = min(self.config.response_length, self.config.max_model_len - len(generation_prompt_ids) - 1)
+                if max_new_tokens <= 0:
+                    finish_reason_type = FinishReasonTypeEnum.STOP
+                    break
                 if not do_sample:
                     kwargs = dict(
                         n=1,
@@ -740,7 +746,6 @@ class SGLangRollout(BaseRollout):
                         top_k=-1,
                         ignore_eos=False,
                         min_new_tokens=0,
-                        max_new_tokens=self.config.response_length,
                         skip_special_tokens=True,
                         spaces_between_special_tokens=True,
                     )
@@ -752,6 +757,7 @@ class SGLangRollout(BaseRollout):
                         "temperature": self.config.val_kwargs.temperature,
                         "n": 1,  # if validate, already repeat in ray_trainer
                     }
+                kwargs["max_new_tokens"] = max_new_tokens
                 if (
                     "n" not in kwargs or kwargs["n"] > 1
                 ):  # group size is supported in preprocess
@@ -759,7 +765,7 @@ class SGLangRollout(BaseRollout):
                 # users can customize different sampling_params at different run
                 with self.update_sampling_params(**kwargs):
                     output = await self._engine.async_generate(
-                        prompt=generation_prompt,
+                        input_ids=generation_prompt_ids,
                         sampling_params=self.sampling_params,
                         return_logprob=False,
                     )
