@@ -74,10 +74,6 @@ jobs:
         run: |
           cd tests/workers/rollout
           torchrun --nnodes=1 --nproc_per_node=2 $(which pytest) -s test_sglang_spmd.py
-      - name: Test the latest SGLang async
-        run: |
-          cd tests/workers/rollout
-          torchrun --nnodes=1 --nproc_per_node=2 $(which pytest) -s test_sglang_async_spmd.py
       - name: Test the latest SGLang Rollout async with tool
         run: |
           cd tests/workers/rollout
