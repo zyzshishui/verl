@@ -120,7 +120,7 @@ def generate_hf_output(model, input_ids, attention_mask, tokenizer, max_response
     return tokenizer.batch_decode(response)
 
 
-def get_rollout_config(max_response_length, max_prompt_length, dtype, tensor_parallel_size, tool_config_path: str | None = None):
+def get_rollout_config(max_response_length, max_prompt_length, dtype, tensor_parallel_size, tool_config_path):
     sampling_params = dict(
         n=1,
         temperature=0,
@@ -152,7 +152,7 @@ def get_rollout_config(max_response_length, max_prompt_length, dtype, tensor_par
                 "max_turns": 4,
                 "enable": True,
                 "tool_config_path": tool_config_path,
-                "format": "qwen",
+                "format": "chatml",
             },
             "max_model_len": None,
             **sampling_params,
