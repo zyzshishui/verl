@@ -147,8 +147,6 @@ class SGLangRollout(BaseRollout):
         self._device_mesh_cpu = device_mesh
         os.environ.setdefault("SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK", "true")
 
-        _ensure_context_length(config, model_hf_config)
-
         (
             self._tool_schemas,
             self._tool_map,
@@ -160,30 +158,40 @@ class SGLangRollout(BaseRollout):
         # will be freed after each `generate_sequences` call.
         assert not (not config.enforce_eager and config.free_cache_engine), "disable CUDA graph (enforce_eager = False) if free cache engine"
 
-        # init parallel state
-        tp_size = self.config.get("tensor_model_parallel_size", 1)
-        world_size = dist.get_world_size()
-        assert tp_size <= world_size, "tensor parallel size should be less than or equal to world size"
-        if kwargs.get("train_tp", None) is not None:
-            # `train_tp` is the total tensor parallelism size for Megatron.
-            # `tp_size` is SGLang tensor parallel size.
-            # `num_tp_per_train_tp` is how many SGLang tensor parallel
-            # groups fit into one Megatron training tensor parallel group.
+        logger.info(f"tool_schemas: {self._tool_schemas}, tool_map: {self._tool_map}, tool_call_parser_type: {self._tool_call_parser_type}, sgl_tools: {self._sgl_tools}, function_call_parser: {self._function_call_parser}")
 
-            # This is crucial for aligning SGLang's internal parallel
-            # groups with Megatron's distributed setup where SGLang
-            # operates within a subset of Megatron's TP.
+        self._init_distributed_env(device_mesh_cpu=device_mesh, **kwargs)
 
+        self._verify_config(model_hf_config=model_hf_config)
+        # initialize the inference engine
+        self._init_inference_engine(trust_remote_code, actor_module, port)
+
+        self._init_sampling_params(**kwargs)
+
+        self.tokenizer = tokenizer
+        self.pad_token_id = tokenizer.pad_token_id
+
+    def _init_distributed_env(self, device_mesh_cpu, **kwargs):
+        self._device_mesh_cpu = device_mesh_cpu
+        os.environ.setdefault("SGL_DISABLE_TP_MEMORY_INBALANCE_CHECK", "true")
+        self.tensor_parallel_size = self.config.get("tensor_model_parallel_size", 1)
+        assert self.tensor_parallel_size <= dist.get_world_size(), "tensor parallel size should be less than or equal to the world size"
+        self.train_tp = kwargs.get("train_tp", None)
+        if self.train_tp is not None:
+            # deployed with megatron
             os.environ["CUDA_TIMER_STREAM_KAFKA_ENABLE"] = "0"
             os.environ["MEGATRON_IMPORT_TIMERS"] = "0"
             train_tp = kwargs.get("train_tp", None)
-
-            num_tp_per_train_tp = train_tp // tp_size
+            num_tp_per_train_tp = train_tp // self.tensor_parallel_size
             sglang_ps.initialize_parallel_state(
-                tensor_model_parallel_size=tp_size,
+                tensor_model_parallel_size=self.tensor_parallel_size,
                 num_tp_per_train_tp=num_tp_per_train_tp,
             )
 
+        tp_size = self.tensor_parallel_size
+        world_size = int(os.getenv("WORLD_SIZE", "-1"))
+
+        # init device mesh
         if self._device_mesh_cpu is None:
             device_mesh_kwargs = dict(
                 mesh_shape=(world_size // tp_size, tp_size, 1),
@@ -191,52 +199,32 @@ class SGLangRollout(BaseRollout):
             )
 
             self._device_mesh_cpu = init_device_mesh("cpu", **device_mesh_kwargs)
+
         self._rank = self._device_mesh_cpu.get_rank()
         self._tp_rank = self._device_mesh_cpu["tp"].get_local_rank()
-        self._tp_size = tp_size
-
-        if not self.config.get("max_model_len", None):
-            self.config.max_model_len = self.config.prompt_length + self.config.response_length
-        assert self.config.max_model_len >= self.config.prompt_length + self.config.response_length, f"""max_model_len should be greater than total sequence length
-            (prompt_length + response_length): {self.config.max_model_len} >=
-            {self.config.prompt_length} + {self.config.response_length}"""
-        assert model_hf_config.max_position_embeddings >= self.config.max_model_len, "model context length should be greater than total sequence length"
-
-        # `max_turns` defines the maximum number of tool-calling
-        # rounds within a single request.
-
-        # In multi-turn RL scenarios, each request to the rollout
-        # engine can invoke tools multiple times.
-
-        # The entire multi-turn trajectory is then used for a
-        # single actor and critic training step before being
-        # discarded.
-
-        # Tool-calling ends under three conditions:
-        # 1. The `max_turns` limit is reached.
-        # 2. The trajectory exceeds the model's context length.
-        # 3. A tool returns a terminal state.
-
-        # If `max_turns` is not explicitly set, it defaults
-        # to `max_model_len // 3`, which is a large number.
-        if self.config.multi_turn.max_turns is None:
-            self.config.multi_turn.max_turns = self.config.max_model_len // 3
-
+        self._tp_size = self._device_mesh_cpu["tp"].size()
+        if self._rank == 0:
+            logger.info(f"_init_distributed_env: :tp_world: {self._tp_size}, global_world: {world_size}")
         # get tp_rank of this process in this tp group
         visible_devices = [None] * self._device_mesh_cpu.size(1)
 
-        dist.all_gather_object(
-            visible_devices,
-            os.environ["CUDA_VISIBLE_DEVICES"],
-            self._device_mesh_cpu.get_group("tp"),
-        )
-        visible_devices_set = set(",".join(visible_devices).split(","))
-        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(sorted(list(visible_devices_set)))
+        torch.distributed.all_gather_object(visible_devices, os.environ["CUDA_VISIBLE_DEVICES"], self._device_mesh_cpu.get_group("tp"))
+        self.visible_devices_set = set(",".join(visible_devices).split(","))
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(sorted(list(self.visible_devices_set)))
 
+    def _verify_config(self, model_hf_config):
+        if not self.config.get("max_model_len", None):
+            self.config.max_model_len = self.config.prompt_length + self.config.response_length
+        assert self.config.max_model_len >= self.config.prompt_length + self.config.response_length, f"""max_model_len should be greater than total sequence length (prompt_length + response_length): 
+            {self.config.max_model_len} >= {self.config.prompt_length} + {self.config.response_length}"""
+        assert model_hf_config.max_position_embeddings >= self.config.max_model_len, "model context length should be greater than total sequence length"
+        # currently max_turns stand for max number of tool calls
+        if self.config.multi_turn.max_turns is None:
+            self.config.multi_turn.max_turns = self.config.max_model_len // 3
+
+    def _init_inference_engine(self, trust_remote_code, actor_module, port):
         # initialize the inference engine
-        visible_devices_count = len(visible_devices_set)
-        nnodes = math.ceil(tp_size / visible_devices_count)
-
+        nnodes = -(-self._tp_size // len(self.visible_devices_set))
         if nnodes > 1:
             ip = get_ip()
             port = get_open_port() if port is None else port
@@ -251,11 +239,7 @@ class SGLangRollout(BaseRollout):
         else:
             dist_init_addr = None
 
-        # The format of the model weights to be loaded.
-        load_format = "dummy" if config.load_format.startswith("dummy") else config.load_format
-        # copy it to avoid secretly modifying the engine config
-        engine_kwargs = {} if "engine_kwargs" not in config or "sglang" not in config.engine_kwargs else OmegaConf.to_container(deepcopy(config.engine_kwargs.sglang))
-
+        load_format = "dummy" if self.config.load_format.startswith("dummy") else self.config.load_format
         tp_size_per_node = self._tp_size // nnodes
         node_rank = self._tp_rank // tp_size_per_node
         first_rank_in_node = self._tp_rank % tp_size_per_node == 0
@@ -265,8 +249,8 @@ class SGLangRollout(BaseRollout):
             os.environ["SGLANG_BLOCK_NONZERO_RANK_CHILDREN"] = "0"
             self._engine = Engine(
                 model_path=actor_module,
-                dtype=config.dtype,
-                mem_fraction_static=config.gpu_memory_utilization,
+                dtype=self.config.dtype,
+                mem_fraction_static=self.config.gpu_memory_utilization,
                 enable_memory_saver=True,
                 base_gpu_id=0,
                 gpu_id_step=1,
@@ -276,19 +260,16 @@ class SGLangRollout(BaseRollout):
                 dist_init_addr=dist_init_addr,
                 nnodes=nnodes,
                 trust_remote_code=trust_remote_code,
-                # NOTE(linjunrong): add rank to prevent SGLang
-                # generate same port inside PortArgs.init_new
+                # NOTE(linjunrong): add rank to prevent SGLang generate same port inside PortArgs.init_new
                 # when random.seed is being set during training
                 port=30000 + rank,
-                # Note: Enable below to display SGLang engine logs at INFO level
+                # NOTE(Chenyang): if you want to debug the SGLang engine output
+                # please set the following parameters
+                # Otherwise, it will make the engine run too slow
                 # log_level="INFO",
-                # Note: Enable below to display ReqInput in details, be careful about the log volume
                 # log_requests=True,
-                # Note: Log level for ReqInput, 0 for concise, 1 for log middle leve, 2 for verbose
                 # log_requests_level=2,
-                # Note: Enable below to limit the number of running requests
                 # max_running_requests=1,
-                **engine_kwargs,
             )
         else:
             self._engine = None
@@ -297,29 +278,23 @@ class SGLangRollout(BaseRollout):
         if self._tp_rank == 0:
             self._engine.release_memory_occupation()
 
-        # Initialize sampling parameters with default values
-        self.sampling_params = {
-            "n": 1,
-            "max_new_tokens": config.response_length,
-            "presence_penalty": 0.0,
-            "frequency_penalty": 0.0,
-            "repetition_penalty": 1.0,
-        }
-
-        # Override defaults with any corresponding values from
-        # the config that are valid SGLang SamplingParams attributes.
-
-        for k in config.keys():
+    def _init_sampling_params(self, **kwargs):
+        kwargs = dict(
+            n=1,
+            max_new_tokens=self.config.response_length,
+            presence_penalty=0.0,
+            frequency_penalty=0.0,
+            repetition_penalty=1.0,
+        )
+        # supporting adding any sampling params from the config file
+        for k in self.config.keys():
             if hasattr(SamplingParams(), str(k)):
-                self.sampling_params[k] = config.get(k)
+                kwargs[k] = self.config.get(k)
+        self.sampling_params = kwargs
 
-        print(f"Sampling parameters: {self.sampling_params}")
-
-        self.tokenizer = tokenizer
-        self.pad_token_id = tokenizer.pad_token_id
-
+        
     def _initialize_tools(self, config, tokenizer):
-        """Initializes external tools.
+        """Initialize tools from configuration.
 
         Args:
             config: Configuration object containing tool-related settings,
@@ -383,7 +358,7 @@ class SGLangRollout(BaseRollout):
         tools_config_file = config.multi_turn.tool_config_path
         tools_config = OmegaConf.load(tools_config_file)
         tool_list = initialize_tools_from_config(tools_config)
-
+        logger.info(f"Initialize tools from configuration.: tool_list: {tool_list}")
         tool_schemas = [tool.get_openai_tool_schema().model_dump() for tool in tool_list]
         tool_map = {tool.name: tool for tool in tool_list}
         tool_call_parser_type = get_tool_call_parser_type(tokenizer)
@@ -558,7 +533,7 @@ class SGLangRollout(BaseRollout):
 
         # users can customize different sampling_params at different run
         with self.update_sampling_params(**kwargs):
-            print(f"{self.sampling_params=}")
+            # print(f"{self.sampling_params=}")
             if self._tp_rank == 0:
                 loop = asyncio.get_event_loop()
                 output = loop.run_until_complete(
@@ -583,11 +558,11 @@ class SGLangRollout(BaseRollout):
             out = _post_process_outputs(self.tokenizer, output)
 
             response = out[0].to(idx.device)
-            # log_probs = out[1].to(idx.device)
+            rollout_log_probs = out[1].to(idx.device)
 
             if response.shape[1] < self.config.response_length:
                 response = pad_sequence_to_length(response, self.config.response_length, self.pad_token_id)
-                # log_probs = pad_sequence_to_length(log_probs, self.config.response_length, self.pad_token_id)
+                rollout_log_probs = pad_sequence_to_length(rollout_log_probs, self.config.response_length, self.pad_token_id)
 
             # utilize current sampling params
             if self.sampling_params.get("n", 1) > 1 and do_sample:
@@ -621,7 +596,7 @@ class SGLangRollout(BaseRollout):
                 "prompts": idx,
                 "responses": response,
                 "input_ids": seq,  # here input_ids become the whole sentences
-                # 'old_log_probs': log_probs, # we will recompute old log prob with actor
+                "rollout_log_probs": rollout_log_probs,  # we will recompute old log prob with actor
                 "attention_mask": attention_mask,
                 "position_ids": position_ids,
             },
@@ -649,13 +624,7 @@ class SGLangRollout(BaseRollout):
         current_turns = 0
         while current_turns < self.config.multi_turn.max_turns:
             if _req.state == AsyncRolloutRequestStateEnum.PENDING:
-                if _req.tools is not None:
-                    tool_creation_coroutines = []
-                    for tool_schema in _req.tools:
-                        tool = self._tool_map[tool_schema.function.name]
-                        create_kwargs = _req.tools_kwargs[tool.name].get("create_kwargs", {})
-                        tool_creation_coroutines.append(tool.create(_req.request_id, **create_kwargs))
-                    await asyncio.gather(*tool_creation_coroutines)
+                await self._handle_pending_state(_req)
                 _req.state = AsyncRolloutRequestStateEnum.RUNNING
             elif _req.state == AsyncRolloutRequestStateEnum.TOOL_CALLING:
                 if _req.messages[-1].tool_calls is not None:
@@ -677,6 +646,7 @@ class SGLangRollout(BaseRollout):
                             (i == len(parsed_tool_calls) - 1),
                             format=self.config.multi_turn.format,
                         )
+                        _req.update_metrics(metrics, tool_call.function.name)
                         if len(_req.input_ids) >= self.config.max_model_len:
                             break
                     if len(_req.input_ids) >= self.config.max_model_len:
@@ -686,44 +656,7 @@ class SGLangRollout(BaseRollout):
                 else:
                     raise ValueError(f"Unexpected tool calling last message state: {_req.messages[-1]}")
             elif _req.state == AsyncRolloutRequestStateEnum.RUNNING:
-                generation_prompt_ids = _req.get_generation_prompt(self.tokenizer)
-                max_new_tokens = min(self.config.response_length, self.config.max_model_len - len(generation_prompt_ids) - 1)
-                if max_new_tokens <= 0:
-                    finish_reason_type = FinishReasonTypeEnum.STOP
-                    break
-                if not do_sample:
-                    kwargs = dict(
-                        n=1,
-                        presence_penalty=0.0,
-                        frequency_penalty=0.0,
-                        repetition_penalty=1.0,
-                        temperature=0,
-                        top_p=1,
-                        top_k=-1,
-                        ignore_eos=False,
-                        min_new_tokens=0,
-                        skip_special_tokens=True,
-                        spaces_between_special_tokens=True,
-                    )
-                elif is_validate:
-                    # TODO: try **
-                    kwargs = {
-                        "top_k": self.config.val_kwargs.top_k,
-                        "top_p": self.config.val_kwargs.top_p,
-                        "temperature": self.config.val_kwargs.temperature,
-                        "n": 1,  # if validate, already repeat in ray_trainer
-                    }
-                kwargs["max_new_tokens"] = max_new_tokens
-                if "n" not in kwargs or kwargs["n"] > 1:  # group size is supported in preprocess
-                    kwargs["n"] = 1
-                # users can customize different sampling_params at different run
-                with self.update_sampling_params(**kwargs):
-                    output = await self._engine.async_generate(
-                        input_ids=generation_prompt_ids,
-                        sampling_params=self.sampling_params,
-                        return_logprob=False,
-                    )
-
+                output = await self._handle_engine_call(_req, do_sample, is_validate, **kwargs)
                 content = output["text"]
                 finish_reason_type = FinishReasonTypeEnum.from_str(output["meta_info"]["finish_reason"]["type"])
                 current_turns += 1
@@ -807,6 +740,53 @@ class SGLangRollout(BaseRollout):
 
         return _req
 
+    async def _handle_engine_call(self, _req: AsyncRolloutRequest, do_sample: bool, is_validate: bool, **kwargs) -> dict:
+        generation_prompt_ids = _req.get_generation_prompt(self.tokenizer)
+        max_new_tokens = min(self.config.response_length, self.config.max_model_len - len(generation_prompt_ids) - 1)
+        if not do_sample:
+            kwargs = dict(
+                n=1,
+                presence_penalty=0.0,
+                frequency_penalty=0.0,
+                repetition_penalty=1.0,
+                temperature=0,
+                top_p=1,
+                top_k=-1,
+                ignore_eos=False,
+                min_new_tokens=0,
+                max_new_tokens=self.config.response_length,
+                skip_special_tokens=True,
+                spaces_between_special_tokens=True,
+            )
+        elif is_validate:
+            # TODO: try **
+            kwargs = {
+                "top_k": self.config.val_kwargs.top_k,
+                "top_p": self.config.val_kwargs.top_p,
+                "temperature": self.config.val_kwargs.temperature,
+                "n": 1,  # if validate, already repeat in ray_trainer
+            }
+        kwargs["max_new_tokens"] = max_new_tokens
+        if "n" not in kwargs or kwargs["n"] > 1:  # group size is supported in preprocess
+            kwargs["n"] = 1
+        # users can customize different sampling_params at different run
+        with self.update_sampling_params(**kwargs):
+            output = await self._engine.async_generate(
+                input_ids=generation_prompt_ids,
+                sampling_params=self.sampling_params,
+                return_logprob=False,
+            )
+        return output
+
+    async def _handle_pending_state(self, _req: AsyncRolloutRequest) -> AsyncRolloutRequest:
+        if _req.tools is not None:
+            tool_creation_coroutines = []
+            for tool_schema in _req.tools:
+                tool = self._tool_map[tool_schema.function.name]
+                create_kwargs = _req.tools_kwargs[tool.name].get("create_kwargs", {})
+                tool_creation_coroutines.append(tool.create(_req.request_id, **create_kwargs))
+            await asyncio.gather(*tool_creation_coroutines)
+
     @GPUMemoryLogger(role="sglang rollout", logger=logger)
     @torch.no_grad()
     def generate_sequences_with_tools(self, prompts: DataProto, **kwargs) -> DataProto:
@@ -872,7 +852,7 @@ class SGLangRollout(BaseRollout):
             prompt_ids.append(torch.tensor(req.prompt_ids, dtype=torch.int, device=tgt_device))
             response_ids.append(torch.tensor(req.response_ids, dtype=torch.int, device=tgt_device))
             if len(req.response_ids) > self.config.response_length:
-                print(
+                logger.warning(
                     f"""{req.request_id=} has response_ids length {len(req.response_ids)} 
                     greater than max_response_len {self.config.response_length},\n{req=}"""
                 )
@@ -1027,12 +1007,3 @@ class SGLangRollout(BaseRollout):
                 req_list.append(req)
 
         return req_list
-
-
-def _ensure_context_length(config, model_hf_config):
-    if not config.get("max_model_len", None):
-        config.max_model_len = config.prompt_length + config.response_length
-    assert config.max_model_len >= config.prompt_length + config.response_length, f"""max_model_len should be greater than total sequence length
-        (prompt_length + response_length): {config.max_model_len} >=
-        {config.prompt_length} + {config.response_length}"""
-    assert model_hf_config.max_position_embeddings >= config.max_model_len, "model context length should be greater than total sequence length"
