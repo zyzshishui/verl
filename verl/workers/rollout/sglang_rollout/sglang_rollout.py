@@ -31,7 +31,6 @@ import torch
 import torch.distributed as dist
 from omegaconf import DictConfig
 from sglang.srt.entrypoints.engine import Engine
-from sglang.srt.function_call.function_call_parser import FunctionCallParser
 from sglang.srt.openai_api.protocol import Tool
 from sglang.srt.sampling.sampling_params import SamplingParams
 from sglang.srt.utils import get_ip, get_open_port
@@ -63,6 +62,11 @@ from verl.workers.rollout.schemas import (
     Message,
 )
 from verl.workers.rollout.sglang_rollout.utils import broadcast_pyobj
+try:
+    from sglang.srt.function_call.function_call_parser import FunctionCallParser
+except ImportError:
+    from sglang.srt.function_call_parser import FunctionCallParser
+
 
 logger = logging.getLogger(__file__)
 logger.setLevel(os.getenv("VERL_LOGGING_LEVEL", "WARN"))
