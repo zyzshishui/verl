@@ -21,7 +21,6 @@ from omegaconf import DictConfig
 @patch.dict(
     "sys.modules",
     {
-        "verl.workers.rollout.sglang_rollout.async_sglang_rollout": MagicMock(AsyncSGLangRollout=MagicMock()),
         "verl.workers.rollout.sglang_rollout.sglang_rollout": MagicMock(SGLangRollout=MagicMock()),
     },
 )
